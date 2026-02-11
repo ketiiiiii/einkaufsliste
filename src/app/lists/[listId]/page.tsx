@@ -71,8 +71,8 @@ export default async function ListDetailPage({ params, searchParams }: PageProps
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
-      <div className="mx-auto max-w-3xl px-4 py-10">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="mx-auto max-w-3xl px-3 py-6 sm:px-4 sm:py-10">
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <Link
               href="/lists"
@@ -82,10 +82,10 @@ export default async function ListDetailPage({ params, searchParams }: PageProps
             >
               ←
             </Link>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight">{list.name}</h1>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2">{list.name}</h1>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             <RenamePopover listId={list.id} name={list.name} />
             <Link
               href={toggleShowDoneHref}
@@ -110,16 +110,16 @@ export default async function ListDetailPage({ params, searchParams }: PageProps
           </div>
         </header>
 
-        <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4">
+        <section className="mt-3 rounded-2xl border border-zinc-200 bg-white p-3 sm:mt-6 sm:p-4">
           <h2 className="text-sm font-semibold text-zinc-700">Position hinzufügen</h2>
           <AddItemForm listId={list.id} units={UNITS} />
         </section>
 
-        <section className="mt-6">
+        <section className="mt-3 sm:mt-6">
           {items.length === 0 ? (
             <p className="text-sm text-zinc-600">Keine Positionen (oder alles erledigt).</p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-1 sm:space-y-2">
               {typedItems.map((item: ItemRow) => {
                 return (
                   <InlineItemRow key={item.id} listId={list.id} item={item} units={UNITS} />

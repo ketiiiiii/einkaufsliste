@@ -26,8 +26,8 @@ export default async function ListsPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
-      <div className="mx-auto max-w-3xl px-4 py-10">
-        <header className="flex items-center justify-between gap-4">
+      <div className="mx-auto max-w-3xl px-3 py-6 sm:px-4 sm:py-10">
+        <header className="flex items-center justify-between gap-2 sm:gap-4">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Einkaufslisten</h1>
             <p className="mt-1 text-sm text-zinc-600">
@@ -37,8 +37,8 @@ export default async function ListsPage() {
           <SignOutButton />
         </header>
 
-        <section className="mt-8 rounded-2xl border border-zinc-200 bg-white p-4">
-          <form action={createList} className="flex gap-2">
+        <section className="mt-4 rounded-2xl border border-zinc-200 bg-white p-3 sm:mt-8 sm:p-4">
+          <form action={createList} className="flex gap-1.5 sm:gap-2">
             <input
               name="name"
               placeholder="Neue Liste (z.B. WG, Grillabend, Büro…)"
@@ -55,7 +55,7 @@ export default async function ListsPage() {
           </form>
         </section>
 
-        <section className="mt-6">
+        <section className="mt-4 sm:mt-6">
           {lists.length === 0 ? (
             <p className="text-sm text-zinc-600">Noch keine Listen. Leg eine an.</p>
           ) : (
@@ -63,7 +63,7 @@ export default async function ListsPage() {
               {lists.map((list: ListRow) => (
                 <li
                   key={list.id}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white p-4"
+                  className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-200 bg-white p-3 sm:gap-3 sm:p-4"
                 >
                   <Link
                     href={`/lists/${list.id}`}

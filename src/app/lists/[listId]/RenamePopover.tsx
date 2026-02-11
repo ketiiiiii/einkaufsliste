@@ -30,7 +30,7 @@ export function RenamePopover({ listId, name }: Props) {
           ✎
         </summary>
 
-        <div className="absolute right-0 z-10 mt-2 w-[340px] max-w-[calc(100vw-2rem)] rounded-2xl border border-zinc-200 bg-white p-3">
+        <div className="absolute left-0 z-10 mt-2 w-[320px] max-w-[calc(100vw-2rem)] rounded-2xl border border-zinc-200 bg-white p-3 sm:left-auto sm:right-0 sm:w-[340px]">
           <form
             className="flex gap-2"
             onSubmit={(e) => {

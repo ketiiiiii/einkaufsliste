@@ -28,10 +28,10 @@ export function InlineItemRow({ listId, item, units }: Props) {
   }
 
   return (
-    <li className="rounded-2xl border border-zinc-200 bg-white p-4">
+    <li className="rounded-xl border border-zinc-200 bg-white p-2 sm:rounded-2xl sm:p-4">
       <form
         ref={formRef}
-        className="flex flex-wrap items-center gap-2"
+        className="flex flex-wrap items-center gap-1 sm:gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           const formData = new FormData(e.currentTarget);
@@ -47,7 +47,7 @@ export function InlineItemRow({ listId, item, units }: Props) {
 
         {/* done: hidden 0 + checkbox 1 so we always submit a value */}
         <input type="hidden" name="done" value="0" />
-        <label className="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-xl border border-zinc-200 bg-white hover:bg-zinc-100">
+        <label className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-zinc-200 bg-white hover:bg-zinc-100 sm:h-11 sm:w-11 sm:rounded-xl">
           <input
             type="checkbox"
             name="done"
@@ -67,8 +67,8 @@ export function InlineItemRow({ listId, item, units }: Props) {
           disabled={isPending}
           className={
             item.done
-              ? "h-11 min-w-0 flex-1 rounded-xl border border-zinc-200 px-3 text-sm text-zinc-500 line-through outline-none focus:border-zinc-400"
-              : "h-11 min-w-0 flex-1 rounded-xl border border-zinc-200 px-3 text-sm outline-none focus:border-zinc-400"
+              ? "h-9 min-w-0 flex-1 rounded-lg border border-zinc-200 px-2 text-sm text-zinc-500 line-through outline-none focus:border-zinc-400 sm:h-11 sm:rounded-xl sm:px-3"
+              : "h-9 min-w-0 flex-1 rounded-lg border border-zinc-200 px-2 text-sm outline-none focus:border-zinc-400 sm:h-11 sm:rounded-xl sm:px-3"
           }
           placeholder="Bezeichnung"
         />
@@ -80,8 +80,8 @@ export function InlineItemRow({ listId, item, units }: Props) {
           disabled={isPending}
           className={
             item.done
-              ? "h-11 w-[96px] rounded-xl border border-zinc-200 px-3 text-sm text-zinc-500 line-through outline-none focus:border-zinc-400"
-              : "h-11 w-[96px] rounded-xl border border-zinc-200 px-3 text-sm outline-none focus:border-zinc-400"
+              ? "h-9 w-[64px] rounded-lg border border-zinc-200 px-2 text-sm text-zinc-500 line-through outline-none focus:border-zinc-400 sm:h-11 sm:w-[96px] sm:rounded-xl sm:px-3"
+              : "h-9 w-[64px] rounded-lg border border-zinc-200 px-2 text-sm outline-none focus:border-zinc-400 sm:h-11 sm:w-[96px] sm:rounded-xl sm:px-3"
           }
           placeholder="Menge"
         />
@@ -93,8 +93,8 @@ export function InlineItemRow({ listId, item, units }: Props) {
           disabled={isPending}
           className={
             item.done
-              ? "h-11 w-[96px] rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-500 outline-none focus:border-zinc-400"
-              : "h-11 w-[96px] rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-zinc-400"
+              ? "h-9 w-[64px] rounded-lg border border-zinc-200 bg-white px-2 text-sm text-zinc-500 outline-none focus:border-zinc-400 sm:h-11 sm:w-[96px] sm:rounded-xl sm:px-3"
+              : "h-9 w-[64px] rounded-lg border border-zinc-200 bg-white px-2 text-sm outline-none focus:border-zinc-400 sm:h-11 sm:w-[96px] sm:rounded-xl sm:px-3"
           }
         >
           <option value="">Einheit</option>

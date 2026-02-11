@@ -59,13 +59,13 @@ export function AddItemForm({ listId, units }: Props) {
   }, [normalizedQuery]);
 
   return (
-    <form action={addItem} className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-12">
+    <form action={addItem} className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-12 sm:gap-2">
       <input type="hidden" name="listId" value={listId} />
 
       <input
         name="title"
         placeholder="Bezeichnung"
-        className="h-11 rounded-xl border border-zinc-200 px-3 text-sm outline-none focus:border-zinc-400 sm:col-span-6"
+        className="h-9 rounded-lg border border-zinc-200 px-2 text-sm outline-none focus:border-zinc-400 sm:col-span-7 sm:h-11 sm:rounded-xl sm:px-3"
         autoFocus
         autoComplete="off"
         list={listBoxId}
@@ -81,12 +81,12 @@ export function AddItemForm({ listId, units }: Props) {
       <input
         name="quantity"
         placeholder="Menge"
-        className="h-11 rounded-xl border border-zinc-200 px-3 text-sm outline-none focus:border-zinc-400 sm:col-span-3"
+        className="h-9 rounded-lg border border-zinc-200 px-2 text-sm outline-none focus:border-zinc-400 sm:col-span-2 sm:h-11 sm:rounded-xl sm:px-3"
       />
 
       <select
         name="unit"
-        className="h-11 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-zinc-400 sm:col-span-2"
+        className="h-9 rounded-lg border border-zinc-200 bg-white px-2 text-sm outline-none focus:border-zinc-400 sm:col-span-2 sm:h-11 sm:rounded-xl sm:px-3"
         defaultValue=""
       >
         <option value="">Einheit</option>
@@ -99,7 +99,7 @@ export function AddItemForm({ listId, units }: Props) {
 
       <button
         type="submit"
-        className="h-11 rounded-xl bg-zinc-900 px-4 text-sm font-semibold text-white hover:bg-zinc-800 sm:col-span-1"
+        className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-900 text-sm font-semibold text-white hover:bg-zinc-800 sm:col-span-1 sm:h-11 sm:w-11 sm:rounded-xl"
         aria-label="Position hinzufügen"
         title="Position hinzufügen"
       >
