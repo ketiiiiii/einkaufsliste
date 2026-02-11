@@ -24,6 +24,9 @@ Die anderen Variablen kommen aus `render.yaml`:
 Beim Start läuft automatisch:
 - `npx prisma migrate deploy`
 
+## Port
+Render setzt die Variable `PORT`. Starte Next.js dort mit `-p $PORT` (siehe `render.yaml`), sonst lauscht Next ggf. auf 3000 und Render erreicht den Service nicht.
+
 ## Hinweise
 - Disk ist auf `/var/data` gemountet.
 - SQLite File ist `/var/data/app.db`.
