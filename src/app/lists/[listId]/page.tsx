@@ -8,6 +8,7 @@ import { addItem, deleteList } from "../actions";
 import { AddItemForm } from "./AddItemForm";
 import { InlineItemRow } from "./InlineItemRow";
 import { RenamePopover } from "./RenamePopover";
+import { ConfirmDeleteListButton } from "../ConfirmDeleteListButton";
 
 const UNITS = ["Stk", "kg", "g", "l", "ml", "Pck", "Fl", "Dose"];
 
@@ -96,17 +97,7 @@ export default async function ListDetailPage({ params, searchParams }: PageProps
             >
               {showDone ? "☐" : "☑"}
             </Link>
-            <form action={deleteList}>
-              <input type="hidden" name="listId" value={list.id} />
-              <button
-                type="submit"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-200 bg-white text-sm font-semibold hover:bg-zinc-100"
-                aria-label="Liste löschen"
-                title="Liste löschen"
-              >
-                ⌫
-              </button>
-            </form>
+            <ConfirmDeleteListButton listId={list.id} />
           </div>
         </header>
 
