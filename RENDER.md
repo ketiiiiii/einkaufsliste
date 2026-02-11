@@ -24,3 +24,6 @@ Beim Start läuft automatisch:
 ## Hinweise
 - Disk ist auf `/var/data` gemountet.
 - SQLite File ist `/var/data/app.db`.
+
+## Troubleshooting
+Wenn Render beim Blueprint-Import einen Schema-Fehler zu `disks` anzeigt, nutzt Render aktuell das Feld `disk` (singular) im `render.yaml`.

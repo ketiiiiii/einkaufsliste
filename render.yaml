@@ -16,7 +16,7 @@ services:
         sync: false
       - key: DATABASE_URL
         value: file:/var/data/app.db
-    disks:
-      - name: data
-        mountPath: /var/data
-        sizeGB: 1
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
