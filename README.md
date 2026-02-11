@@ -1,6 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Einfache Einkaufsliste (mehrere Listen) mit Registrierung + Login.
 
-## Getting Started
+## Lokal starten (localhost)
 
 First, run the development server:
 
@@ -15,6 +15,14 @@ bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+### Env
+- `.env` enthält bereits `DATABASE_URL` (SQLite).
+- Setze zusätzlich mindestens `NEXTAUTH_SECRET` (siehe `.env.example`).
+
+## Deploy (Render)
+- Blueprint via `render.yaml` ist vorbereitet.
+- Details: siehe RENDER.md.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

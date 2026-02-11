@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: einkaufsliste
+    env: node
+    plan: free
+    autoDeploy: true
+    buildCommand: npm ci && npx prisma generate && npm run build
+    startCommand: npx prisma migrate deploy && npm run start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: DATABASE_URL
+        value: file:/var/data/app.db
+    disks:
+      - name: data
+        mountPath: /var/data
+        sizeGB: 1
