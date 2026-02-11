@@ -10,6 +10,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PRISMA_CLIENT_ENGINE_TYPE
+        value: library
       - key: NEXTAUTH_URL
         sync: false
       - key: NEXTAUTH_SECRET

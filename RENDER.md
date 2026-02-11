@@ -14,6 +14,9 @@ Im Render Service unter **Environment**:
 - `NEXTAUTH_SECRET` setzen (zufälliger String)
 - `NEXTAUTH_URL` setzen (z.B. `https://<dein-service>.onrender.com`)
 
+Optional/empfohlen:
+- `PRISMA_CLIENT_ENGINE_TYPE=library` (falls Prisma Engine/Adapter Probleme macht)
+
 Die anderen Variablen kommen aus `render.yaml`:
 - `DATABASE_URL=file:/var/data/app.db`
 
