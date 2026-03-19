@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/require-user";
 
-import { addItem, deleteList } from "../actions";
 import { AddItemForm } from "./AddItemForm";
 import { InlineItemRow } from "./InlineItemRow";
 import { RenamePopover } from "./RenamePopover";
@@ -66,7 +65,6 @@ export default async function ListDetailPage({ params, searchParams }: PageProps
   const nextTake = take + 10;
   const hasMore = totalCount > take;
 
-  const selfHref = `/lists/${listId}?showDone=${showDone ? "1" : "0"}&take=${take}`;
   const toggleShowDoneHref = `/lists/${listId}?showDone=${showDone ? "0" : "1"}&take=${take}`;
   const nextHref = `/lists/${listId}?showDone=${showDone ? "1" : "0"}&take=${nextTake}`;
 

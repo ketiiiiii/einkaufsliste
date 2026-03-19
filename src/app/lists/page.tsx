@@ -35,7 +35,18 @@ export default async function ListsPage() {
               Angemeldet als {session?.user?.name ?? session?.user?.email ?? "User"}
             </p>
           </div>
-          <SignOutButton />
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Link
+              href="/tasks"
+              prefetch={false}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-200 bg-white text-sm font-semibold text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900"
+              aria-label="Task Board"
+              title="Task Board"
+            >
+              ⌗
+            </Link>
+            <SignOutButton />
+          </div>
         </header>
 
         <section className="mt-4 rounded-2xl border border-zinc-200 bg-white p-3 sm:mt-8 sm:p-4">

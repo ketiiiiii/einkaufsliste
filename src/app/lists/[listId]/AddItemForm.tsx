@@ -16,10 +16,17 @@ export function AddItemForm({ listId, units }: Props) {
   const abortRef = useRef<AbortController | null>(null);
 
   const normalizedQuery = useMemo(() => query.trim(), [query]);
+  const handleQueryChange = (value: string) => {
+    setQuery(value);
+    if (value.trim().length < 1) {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      setSuggestions([]);
+    }
+  };
 
   useEffect(() => {
     if (normalizedQuery.length < 1) {
-      setSuggestions([]);
       abortRef.current?.abort();
       abortRef.current = null;
       return;
@@ -70,7 +77,7 @@ export function AddItemForm({ listId, units }: Props) {
         autoComplete="off"
         list={listBoxId}
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => handleQueryChange(e.target.value)}
       />
       <datalist id={listBoxId}>
         {suggestions.map((s) => (
