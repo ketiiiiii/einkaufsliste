@@ -31,7 +31,8 @@ export type TaskCard = {
   x: number;
   y: number;
   color: ColorToken;
-  duration?: number; // Durchlaufzeit in Tagen, default 1
+  duration?: number; // Durchlaufzeit, Einheit via unit
+  unit?: "h" | "d"; // "d"=Tage (default), "h"=Stunden
   todos?: Todo[];
   comments?: Comment[];
   subBoard?: BoardState; // nested sub-board for drill-in
@@ -43,6 +44,8 @@ export type TaskConnection = {
   id: string;
   from: string;
   to: string;
+  lag?: number;        // Wartezeit nach dem Vorgänger (Einheit: lagUnit)
+  lagUnit?: "h" | "d"; // default "h"
 };
 
 export type VariantTab = {
@@ -91,6 +94,17 @@ const COLORS: Record<ColorToken, { bg: string; border: string; text: string; lab
 };
 
 const paletteOrder: ColorToken[] = ["amber", "orange", "emerald", "teal", "sky", "indigo", "rose", "violet"];
+
+// --- Duration helpers ---
+const toHours = (duration: number, unit?: "h" | "d") =>
+  unit === "h" ? duration : duration * HOURS_PER_DAY;
+const lagToHours = (lag: number | undefined, lagUnit?: "h" | "d") =>
+  lag ? (lagUnit === "d" ? lag * HOURS_PER_DAY : lag) : 0;
+const fmtDuration = (hours: number) => {
+  if (hours >= HOURS_PER_DAY && hours % HOURS_PER_DAY === 0) return `${hours / HOURS_PER_DAY}d`;
+  if (hours >= HOURS_PER_DAY) return `${(hours / HOURS_PER_DAY).toFixed(1)}d`;
+  return `${hours}h`;
+};
 
 const newId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
@@ -239,6 +253,10 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
     connectedIds.add(c.to);
   }
 
+  // Connection lookup for lag access
+  const connLookup = new Map<string, TaskConnection>();
+  for (const c of connections) connLookup.set(`${c.from}:${c.to}`, c);
+
   // Topological sort
   const queue = ids.filter((id) => (inDegree.get(id) ?? 0) === 0);
   const topoOrder: string[] = [];
@@ -254,26 +272,34 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
   }
   if (topoOrder.length !== ids.length) return { ...empty, hasCycle: true };
 
-  // Forward pass: ES / EF
+  // Forward pass: ES / EF (in hours)
   const ES = new Map<string, number>();
   const EF = new Map<string, number>();
   for (const id of topoOrder) {
-    const dur = tasks.find((t) => t.id === id)?.duration ?? 1;
+    const task = tasks.find((t) => t.id === id)!;
+    const dur = toHours(task.duration ?? 1, task.unit);
     const preds = predecessors.get(id) ?? [];
-    const es = preds.length === 0 ? 0 : Math.max(...preds.map((p) => EF.get(p) ?? 0));
+    const es = preds.length === 0 ? 0 : Math.max(...preds.map((p) => {
+      const conn = connLookup.get(`${p}:${id}`);
+      return (EF.get(p) ?? 0) + lagToHours(conn?.lag, conn?.lagUnit);
+    }));
     ES.set(id, es);
     EF.set(id, es + dur);
   }
 
   const projectDuration = EF.size === 0 ? 0 : Math.max(...EF.values());
 
-  // Backward pass: LF / LS
+  // Backward pass: LF / LS (in hours)
   const LF = new Map<string, number>();
   const LS = new Map<string, number>();
   for (const id of [...topoOrder].reverse()) {
-    const dur = tasks.find((t) => t.id === id)?.duration ?? 1;
+    const task = tasks.find((t) => t.id === id)!;
+    const dur = toHours(task.duration ?? 1, task.unit);
     const succs = successors.get(id) ?? [];
-    const lf = succs.length === 0 ? projectDuration : Math.min(...succs.map((s) => LS.get(s) ?? projectDuration));
+    const lf = succs.length === 0 ? projectDuration : Math.min(...succs.map((s) => {
+      const conn = connLookup.get(`${id}:${s}`);
+      return (LS.get(s) ?? projectDuration) - lagToHours(conn?.lag, conn?.lagUnit);
+    }));
     LF.set(id, lf);
     LS.set(id, lf - dur);
   }
@@ -286,13 +312,14 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
     if (Math.abs(float) < 0.001) criticalTaskIds.add(id);
   }
 
-  // Critical connections: both endpoints critical AND EF[from] == ES[to]
+  // Critical connections: both endpoints critical AND EF[from] + lag == ES[to]
   const criticalConnectionIds = new Set<string>();
   for (const c of connections) {
+    const conn = connLookup.get(`${c.from}:${c.to}`) ?? c;
     if (
       criticalTaskIds.has(c.from) &&
       criticalTaskIds.has(c.to) &&
-      Math.abs((EF.get(c.from) ?? 0) - (ES.get(c.to) ?? 0)) < 0.001
+      Math.abs((EF.get(c.from) ?? 0) + lagToHours(conn.lag, conn.lagUnit) - (ES.get(c.to) ?? 0)) < 0.001
     ) {
       criticalConnectionIds.add(c.id);
     }
@@ -527,7 +554,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
   const criticalPath = useMemo(() => computeCriticalPath(tasks, connections), [tasks, connections]);
 
   const totalPrice = useMemo(
-    () => tasks.reduce((sum, t) => sum + (t.duration ?? 1), 0) * HOURS_PER_DAY * HOURLY_RATE,
+    () => tasks.reduce((sum, t) => sum + toHours(t.duration ?? 1, t.unit), 0) * HOURLY_RATE,
     [tasks]
   );
 
@@ -680,7 +707,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             <span className="flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-orange-400" />
               <span className="font-semibold text-orange-700">Kritischer Weg</span>
-              <span>Projektdauer: <strong className="text-zinc-700">{criticalPath.projectDuration} Tage</strong></span>
+              <span>Projektdauer: <strong className="text-zinc-700">{fmtDuration(criticalPath.projectDuration)}</strong></span>
               <span className="hidden text-zinc-300 sm:inline">·</span>
               <span className="hidden text-zinc-400 sm:inline">Orangene Knoten &amp; Kanten = kein Zeitpuffer</span>
             </span>
@@ -689,7 +716,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             <span className="flex items-center gap-1.5">
               <span className="font-semibold text-zinc-600">Projektkosten</span>
               <span className="tabular-nums">
-                {tasks.reduce((s, t) => s + (t.duration ?? 1), 0)} Tage × {HOURS_PER_DAY}h × CHF {HOURLY_RATE} ={" "}
+                {fmtDuration(tasks.reduce((s, t) => s + toHours(t.duration ?? 1, t.unit), 0))} × CHF {HOURLY_RATE} ={" "}
                 <strong className="text-zinc-800">{formatChf(totalPrice)}</strong>
               </span>
             </span>
@@ -927,11 +954,11 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                     );
                   })()}
                   <div className="mt-3 flex items-center justify-between text-[11px] text-zinc-500">
-                    <label className="flex cursor-default items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex cursor-default items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="number"
                         min={1}
-                        max={999}
+                        max={9999}
                         value={task.duration ?? 1}
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
@@ -941,13 +968,21 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                             prev.map((t) => (t.id === task.id ? { ...t, duration: val } : t))
                           );
                         }}
-                        className="w-9 rounded border border-zinc-300 bg-white/80 px-1 py-0.5 text-center text-[11px] font-semibold text-zinc-700 focus:border-zinc-400 focus:outline-none"
-                        aria-label="Durchlaufzeit in Tagen"
+                        className="w-10 rounded border border-zinc-300 bg-white/80 px-1 py-0.5 text-center text-[11px] font-semibold text-zinc-700 focus:border-zinc-400 focus:outline-none"
+                        aria-label="Durchlaufzeit"
                       />
-                      <span className="uppercase tracking-wide">d</span>
-                    </label>
+                      <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, unit: t.unit === "h" ? "d" : "h" } : t)); }}
+                        className="rounded border border-zinc-300 bg-white/80 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-600 hover:border-zinc-400 hover:text-zinc-900"
+                        title="Einheit wechseln (Stunden / Tage)"
+                      >
+                        {task.unit === "h" ? "h" : "d"}
+                      </button>
+                    </div>
                     <span className="font-semibold tabular-nums text-zinc-600">
-                      {formatChf((task.duration ?? 1) * HOURS_PER_DAY * HOURLY_RATE)}
+                      {formatChf(toHours(task.duration ?? 1, task.unit) * HOURLY_RATE)}
                     </span>
                   </div>
                 </article>
@@ -1007,24 +1042,50 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 <h3 className="font-semibold">Aktive Verbindungen</h3>
                 <span className="text-xs uppercase tracking-wide text-zinc-500">{connections.length}</span>
               </div>
-              <ul className="mt-3 flex flex-wrap gap-2">
+              <ul className="mt-3 flex flex-col gap-2">
                 {connections.map((connection) => {
                   const fromTask = tasks.find((task) => task.id === connection.from);
                   const toTask = tasks.find((task) => task.id === connection.to);
                   return (
                     <li
                       key={connection.id}
-                      className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-semibold text-zinc-700"
+                      className="flex items-center gap-2 rounded-xl border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs"
                     >
-                      <span className="max-w-[180px] truncate">
-                        {(fromTask?.title ?? "Task").slice(0, 40)} → {(toTask?.title ?? "Task").slice(0, 40)}
+                      <span className="min-w-0 flex-1 truncate font-semibold text-zinc-700">
+                        {(fromTask?.title ?? "Task").slice(0, 28)} → {(toTask?.title ?? "Task").slice(0, 28)}
+                      </span>
+                      {/* Lag input */}
+                      <span className="flex shrink-0 items-center gap-1 text-zinc-500">
+                        <span className="text-[10px] uppercase tracking-wide">+Lag</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={9999}
+                          value={connection.lag ?? 0}
+                          onChange={(e) => {
+                            const val = Math.max(0, parseInt(e.target.value) || 0);
+                            setConnections((prev) =>
+                              prev.map((c) => c.id === connection.id ? { ...c, lag: val } : c)
+                            );
+                          }}
+                          className="w-12 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-center text-xs font-semibold text-zinc-700 focus:border-zinc-400 focus:outline-none"
+                          aria-label="Lag / Wartezeit"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setConnections((prev) => prev.map((c) => c.id === connection.id ? { ...c, lagUnit: c.lagUnit === "d" ? "h" : "d" } : c))}
+                          className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500 hover:border-zinc-400 hover:text-zinc-800"
+                          title="Lag-Einheit wechseln"
+                        >
+                          {connection.lagUnit === "d" ? "d" : "h"}
+                        </button>
                       </span>
                       <button
                         type="button"
                         onClick={() =>
                           setConnections((prev) => prev.filter((c) => c.id !== connection.id))
                         }
-                        className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full border border-zinc-300 text-[10px] text-zinc-500 hover:bg-zinc-200"
+                        className="ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-300 text-[10px] text-zinc-500 hover:bg-zinc-200"
                         aria-label="Verbindung loeschen"
                         title="Verbindung loeschen"
                       >
@@ -1047,7 +1108,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               <tr className="border-b border-zinc-100 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
                 <th className="px-4 py-3 text-left font-semibold">Farbe</th>
                 <th className="px-4 py-3 text-left font-semibold">Titel</th>
-                <th className="px-4 py-3 text-left font-semibold">Tage</th>
+                <th className="px-4 py-3 text-left font-semibold">Dauer</th>
                 <th className="px-4 py-3 text-left font-semibold">Notiz</th>
                 <th className="px-4 py-3 text-left font-semibold">Prozessfluss</th>
                 <th className="px-4 py-3 text-right font-semibold">Aktion</th>
@@ -1085,20 +1146,30 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <input
-                          type="number"
-                          min={1}
-                          max={999}
-                          value={task.duration ?? 1}
-                          onChange={(e) => {
-                            const val = Math.max(1, parseInt(e.target.value) || 1);
-                            setTasks((prev) =>
-                              prev.map((t) => (t.id === task.id ? { ...t, duration: val } : t))
-                            );
-                          }}
-                          className="w-12 rounded border border-zinc-200 px-1.5 py-1 text-center text-xs font-semibold text-zinc-700 focus:border-zinc-400 focus:outline-none"
-                          aria-label="Durchlaufzeit in Tagen"
-                        />
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={1}
+                            max={9999}
+                            value={task.duration ?? 1}
+                            onChange={(e) => {
+                              const val = Math.max(1, parseInt(e.target.value) || 1);
+                              setTasks((prev) =>
+                                prev.map((t) => (t.id === task.id ? { ...t, duration: val } : t))
+                              );
+                            }}
+                            className="w-12 rounded border border-zinc-200 px-1.5 py-1 text-center text-xs font-semibold text-zinc-700 focus:border-zinc-400 focus:outline-none"
+                            aria-label="Durchlaufzeit"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, unit: t.unit === "h" ? "d" : "h" } : t))}
+                            className="rounded border border-zinc-200 px-1.5 py-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500 hover:border-zinc-400 hover:text-zinc-800"
+                            title="Einheit wechseln"
+                          >
+                            {task.unit === "h" ? "h" : "d"}
+                          </button>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-zinc-500">{task.note ?? <span className="italic text-zinc-300">—</span>}</td>
                       <td className="px-4 py-3">
@@ -1175,40 +1246,44 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         }
         const ROW_H = 36;
         const LABEL_W = 180;
-        const DAY_W = 36;
-        const HEADER_H = 32;
+        const HR_W = 18; // pixels per hour
+        const HEADER_H = 40;
         const PAD = 12;
 
-        // Determine ES/EF for each task — fall back to sequential if no connections
+        // Normalize all durations to hours; ES/EF are already in hours after CPM update
         const efMap = new Map<string, number>();
         const esMap = new Map<string, number>();
         if (connections.length > 0 && !criticalPath.hasCycle && criticalPath.ES.size > 0) {
           for (const t of tasks) {
             esMap.set(t.id, criticalPath.ES.get(t.id) ?? 0);
-            efMap.set(t.id, criticalPath.EF.get(t.id) ?? (criticalPath.ES.get(t.id) ?? 0) + (t.duration ?? 1));
+            efMap.set(t.id, criticalPath.EF.get(t.id) ?? (criticalPath.ES.get(t.id) ?? 0) + toHours(t.duration ?? 1, t.unit));
           }
         } else {
-          // No connections: show tasks in order, stacked sequentially
           let cursor = 0;
           for (const t of tasks) {
+            const dur = toHours(t.duration ?? 1, t.unit);
             esMap.set(t.id, cursor);
-            efMap.set(t.id, cursor + (t.duration ?? 1));
-            cursor += (t.duration ?? 1);
+            efMap.set(t.id, cursor + dur);
+            cursor += dur;
           }
         }
 
-        const maxDay = Math.max(...tasks.map((t) => efMap.get(t.id) ?? 1), 1);
-        const svgW = LABEL_W + maxDay * DAY_W + PAD * 2;
+        const maxHours = Math.max(...tasks.map((t) => efMap.get(t.id) ?? 1), 1);
+        const svgW = LABEL_W + maxHours * HR_W + PAD * 2;
         const svgH = HEADER_H + tasks.length * ROW_H + PAD;
 
-        // Bar color map
         const GANTT_COLORS: Record<string, string> = {
           amber: "#fbbf24", sky: "#38bdf8", rose: "#fb7185",
           emerald: "#34d399", violet: "#a78bfa", zinc: "#a1a1aa",
-          orange: "#fb923c", teal: "#2dd4bf",
+          orange: "#fb923c", teal: "#2dd4bf", indigo: "#818cf8",
         };
 
         const taskIndex = new Map(tasks.map((t, i) => [t.id, i]));
+
+        // Build tick marks: every 8h = 1 day; also every 1h if total ≤ 24h
+        const dayTicks: number[] = [];
+        for (let h = 0; h <= maxHours; h += HOURS_PER_DAY) dayTicks.push(h);
+        const showHourTicks = maxHours <= 48;
 
         return (
           <div className="overflow-x-auto rounded-xl border border-zinc-100 bg-white shadow-sm">
@@ -1230,55 +1305,73 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 />
               ))}
 
-              {/* Day grid lines + headers */}
-              {Array.from({ length: maxDay + 1 }, (_, d) => (
-                <g key={"day-" + d}>
-                  <line
-                    x1={LABEL_W + d * DAY_W}
-                    y1={HEADER_H}
-                    x2={LABEL_W + d * DAY_W}
-                    y2={svgH - PAD}
-                    stroke="#e4e4e7"
-                    strokeWidth={1}
+              {/* Day column shading (every other day) */}
+              {dayTicks.map((h, di) =>
+                di % 2 === 1 ? (
+                  <rect
+                    key={"dayshade-" + di}
+                    x={LABEL_W + h * HR_W}
+                    y={HEADER_H}
+                    width={Math.min(HOURS_PER_DAY * HR_W, (maxHours - h) * HR_W)}
+                    height={tasks.length * ROW_H}
+                    fill="rgba(0,0,0,0.018)"
                   />
-                  {d < maxDay && (
-                    <text
-                      x={LABEL_W + d * DAY_W + DAY_W / 2}
-                      y={HEADER_H - 8}
-                      textAnchor="middle"
-                      fill="#a1a1aa"
-                      fontSize={10}
-                    >
-                      {d + 1}
-                    </text>
-                  )}
-                </g>
+                ) : null
+              )}
+
+              {/* Hour grid lines (light) + day lines (medium) */}
+              {showHourTicks && Array.from({ length: maxHours + 1 }, (_, h) => (
+                h % HOURS_PER_DAY !== 0 && (
+                  <line
+                    key={"hline-" + h}
+                    x1={LABEL_W + h * HR_W} y1={HEADER_H}
+                    x2={LABEL_W + h * HR_W} y2={svgH - PAD}
+                    stroke="#f0f0f2" strokeWidth={1}
+                  />
+                )
+              ))}
+              {dayTicks.map((h) => (
+                <line
+                  key={"dline-" + h}
+                  x1={LABEL_W + h * HR_W} y1={HEADER_H - 10}
+                  x2={LABEL_W + h * HR_W} y2={svgH - PAD}
+                  stroke="#e4e4e7" strokeWidth={1}
+                />
               ))}
 
-              {/* Dependency arrows */}
-              {connections.map((c) => {
-                const fi = taskIndex.get(c.from);
-                const ti = taskIndex.get(c.to);
-                if (fi === undefined || ti === undefined) return null;
-                const isCritical =
-                  criticalPath.criticalConnectionIds.has(c.id);
-                const x1 = LABEL_W + (efMap.get(c.from) ?? 0) * DAY_W;
-                const y1 = HEADER_H + fi * ROW_H + ROW_H / 2;
-                const x2 = LABEL_W + (esMap.get(c.to) ?? 0) * DAY_W;
-                const y2 = HEADER_H + ti * ROW_H + ROW_H / 2;
-                const mx = (x1 + x2) / 2;
+              {/* Day headers */}
+              {dayTicks.map((h, di) => {
+                const next = dayTicks[di + 1] ?? maxHours;
                 return (
-                  <path
-                    key={c.id}
-                    d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                    fill="none"
-                    stroke={isCritical ? "#f97316" : "#cbd5e1"}
-                    strokeWidth={isCritical ? 2 : 1.5}
-                    strokeDasharray={isCritical ? undefined : "4 3"}
-                    markerEnd={`url(#gantt-arrow-${isCritical ? "crit" : "norm"})`}
-                  />
+                  <text
+                    key={"dlabel-" + di}
+                    x={LABEL_W + h * HR_W + (next - h) * HR_W / 2}
+                    y={HEADER_H - 20}
+                    textAnchor="middle"
+                    fill="#71717a"
+                    fontSize={10}
+                    fontWeight="600"
+                  >
+                    {di === 0 ? "Tag 1" : `Tag ${di + 1}`}
+                  </text>
                 );
               })}
+
+              {/* Hour sub-labels */}
+              {showHourTicks && Array.from({ length: maxHours + 1 }, (_, h) => (
+                h % HOURS_PER_DAY !== 0 && (
+                  <text
+                    key={"hlabel-" + h}
+                    x={LABEL_W + h * HR_W}
+                    y={HEADER_H - 6}
+                    textAnchor="middle"
+                    fill="#d4d4d8"
+                    fontSize={8}
+                  >
+                    {h % HOURS_PER_DAY}h
+                  </text>
+                )
+              ))}
 
               {/* Arrow markers */}
               <defs>
@@ -1290,20 +1383,69 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 </marker>
               </defs>
 
+              {/* Dependency arrows */}
+              {connections.map((c) => {
+                const fi = taskIndex.get(c.from);
+                const ti = taskIndex.get(c.to);
+                if (fi === undefined || ti === undefined) return null;
+                const isCritical = criticalPath.criticalConnectionIds.has(c.id);
+                const lagH = lagToHours(c.lag, c.lagUnit);
+                const x1 = LABEL_W + (efMap.get(c.from) ?? 0) * HR_W;
+                const y1 = HEADER_H + fi * ROW_H + ROW_H / 2;
+                // lag bar: show as thin orange or gray stripe between EF and ES_successor
+                const xLagEnd = LABEL_W + ((esMap.get(c.to) ?? 0)) * HR_W;
+                const y2 = HEADER_H + ti * ROW_H + ROW_H / 2;
+                const mx = (x1 + xLagEnd) / 2;
+                return (
+                  <g key={c.id}>
+                    {lagH > 0 && (
+                      <rect
+                        x={x1}
+                        y={HEADER_H + Math.min(fi, ti) * ROW_H}
+                        width={lagH * HR_W}
+                        height={Math.abs(fi - ti) * ROW_H + ROW_H}
+                        fill={isCritical ? "rgba(249,115,22,0.08)" : "rgba(203,213,225,0.2)"}
+                        rx={2}
+                      />
+                    )}
+                    <path
+                      d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${xLagEnd},${y2}`}
+                      fill="none"
+                      stroke={isCritical ? "#f97316" : "#cbd5e1"}
+                      strokeWidth={isCritical ? 2 : 1.5}
+                      strokeDasharray={isCritical ? undefined : "4 3"}
+                      markerEnd={`url(#gantt-arrow-${isCritical ? "crit" : "norm"})`}
+                    />
+                    {lagH > 0 && (
+                      <text
+                        x={x1 + (lagH * HR_W) / 2}
+                        y={HEADER_H + Math.min(fi, ti) * ROW_H + 10}
+                        textAnchor="middle"
+                        fill={isCritical ? "#f97316" : "#94a3b8"}
+                        fontSize={8}
+                        fontWeight="600"
+                      >
+                        +{fmtDuration(lagH)}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+
               {/* Bars + labels */}
               {tasks.map((t, i) => {
                 const es = esMap.get(t.id) ?? 0;
-                const ef = efMap.get(t.id) ?? es + 1;
-                const barX = LABEL_W + es * DAY_W + 2;
-                const barW = Math.max((ef - es) * DAY_W - 4, 4);
+                const ef = efMap.get(t.id) ?? es + toHours(t.duration ?? 1, t.unit);
+                const barX = LABEL_W + es * HR_W + 2;
+                const barW = Math.max((ef - es) * HR_W - 4, 4);
                 const barY = HEADER_H + i * ROW_H + 6;
                 const barH = ROW_H - 12;
                 const isCrit = criticalPath.criticalTaskIds.has(t.id);
                 const col = GANTT_COLORS[t.color] ?? "#a1a1aa";
+                const durH = toHours(t.duration ?? 1, t.unit);
 
                 return (
                   <g key={t.id}>
-                    {/* Row label */}
                     <text
                       x={8}
                       y={HEADER_H + i * ROW_H + ROW_H / 2 + 4}
@@ -1312,33 +1454,22 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                       fontWeight={isCrit ? "700" : "500"}
                       className="select-none"
                     >
-                      {isCrit && "● "}
-                      {t.title.length > 18 ? t.title.slice(0, 17) + "…" : t.title}
+                      {isCrit ? "● " : ""}{t.title.length > 18 ? t.title.slice(0, 17) + "…" : t.title}
                     </text>
 
-                    {/* Bar */}
-                    <rect
-                      x={barX}
-                      y={barY}
-                      width={barW}
-                      height={barH}
-                      rx={4}
-                      fill={col}
-                      opacity={isCrit ? 0.9 : 0.55}
-                    />
+                    <rect x={barX} y={barY} width={barW} height={barH} rx={4} fill={col} opacity={isCrit ? 0.9 : 0.55} />
 
-                    {/* Duration label on bar */}
-                    {barW > 28 && (
+                    {barW > 24 && (
                       <text
                         x={barX + barW / 2}
                         y={barY + barH / 2 + 4}
                         textAnchor="middle"
                         fill="#fff"
-                        fontSize={10}
+                        fontSize={9}
                         fontWeight="600"
                         className="select-none"
                       >
-                        {t.duration ?? 1}d
+                        {fmtDuration(durH)}
                       </text>
                     )}
                   </g>
@@ -1347,8 +1478,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
 
               {/* Header separator */}
               <line x1={0} y1={HEADER_H} x2={svgW} y2={HEADER_H} stroke="#e4e4e7" strokeWidth={1} />
-              <text x={8} y={HEADER_H - 8} fill="#a1a1aa" fontSize={10} fontWeight="600">TASK</text>
-              <text x={LABEL_W + 4} y={HEADER_H - 8} fill="#a1a1aa" fontSize={10} fontWeight="600">TAG</text>
+              <text x={8} y={HEADER_H - 22} fill="#a1a1aa" fontSize={10} fontWeight="600">TASK</text>
             </svg>
           </div>
         );
