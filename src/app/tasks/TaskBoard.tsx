@@ -8,14 +8,23 @@ import {
   useState,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 
-type ColorToken = "amber" | "emerald" | "sky" | "rose" | "violet";
+type ColorToken = "amber" | "orange" | "emerald" | "teal" | "sky" | "indigo" | "rose" | "violet";
 
 type Todo = { id: string; text: string; done: boolean };
 type Comment = { id: string; text: string; createdAt: string; image?: string };
 
-type TaskCard = {
+export type CrossConnection = {
+  id: string;
+  fromPhaseId: string;
+  fromTaskId: string;
+  toPhaseId: string;
+  toTaskId: string;
+};
+
+export type TaskCard = {
   id: string;
   title: string;
   note?: string;
@@ -25,25 +34,43 @@ type TaskCard = {
   duration?: number; // Durchlaufzeit in Tagen, default 1
   todos?: Todo[];
   comments?: Comment[];
+  subBoard?: BoardState; // nested sub-board for drill-in
+  productName?: string;
+  variantLabel?: string;
 };
 
-type TaskConnection = {
+export type TaskConnection = {
   id: string;
   from: string;
   to: string;
 };
 
-type PersistedBoard = {
+export type VariantTab = {
+  id: string;
+  label: string;
   tasks: TaskCard[];
   connections: TaskConnection[];
 };
+
+export type BoardState = {
+  tasks: TaskCard[];
+  connections: TaskConnection[];
+  crossConnections?: CrossConnection[];
+  planName?: string;
+  planVariants?: string[];
+  planId?: string;
+  variantTabs?: VariantTab[];
+  activeVariantId?: string | null;
+};
+
+// Keep alias for compatibility
+type PersistedBoard = BoardState;
 
 const CARD_WIDTH = 224;
 const CARD_HEIGHT = 140;
 const CARD_HALF_WIDTH = CARD_WIDTH / 2;
 const CARD_HALF_HEIGHT = CARD_HEIGHT / 2;
 const CARD_ANCHOR_INSET = 8;
-const STORAGE_KEY = "task-board:v1";
 const HOURLY_RATE = 220;
 const HOURS_PER_DAY = 8;
 const formatChf = (chf: number) => {
@@ -52,48 +79,18 @@ const formatChf = (chf: number) => {
   const s = n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "\u2019");
   return "CHF\u00a0" + s;
 };
-const COLORS: Record<ColorToken, { bg: string; border: string; text: string }> = {
-  amber: { bg: "bg-amber-50", border: "border-amber-200", text: "text-amber-900" },
-  emerald: { bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-900" },
-  sky: { bg: "bg-sky-50", border: "border-sky-200", text: "text-sky-900" },
-  rose: { bg: "bg-rose-50", border: "border-rose-200", text: "text-rose-900" },
-  violet: { bg: "bg-violet-50", border: "border-violet-200", text: "text-violet-900" },
+const COLORS: Record<ColorToken, { bg: string; border: string; text: string; label: string }> = {
+  amber:   { bg: "bg-amber-50",   border: "border-amber-200",   text: "text-amber-900",   label: "Gelb" },
+  orange:  { bg: "bg-orange-50",  border: "border-orange-200",  text: "text-orange-900",  label: "Orange" },
+  emerald: { bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-900", label: "Grün" },
+  teal:    { bg: "bg-teal-50",    border: "border-teal-200",    text: "text-teal-900",    label: "Türkis" },
+  sky:     { bg: "bg-sky-50",     border: "border-sky-200",     text: "text-sky-900",     label: "Blau" },
+  indigo:  { bg: "bg-indigo-50",  border: "border-indigo-200",  text: "text-indigo-900",  label: "Indigo" },
+  rose:    { bg: "bg-rose-50",    border: "border-rose-200",    text: "text-rose-900",    label: "Rot" },
+  violet:  { bg: "bg-violet-50",  border: "border-violet-200",  text: "text-violet-900",  label: "Lila" },
 };
 
-const paletteOrder: ColorToken[] = ["amber", "emerald", "sky", "rose", "violet"];
-
-const fallbackBoard: PersistedBoard = {
-  tasks: [
-    {
-      id: "t-plan",
-      title: "Plan Einkauf",
-      note: "Cluster Listen nach Ort",
-      x: 80,
-      y: 80,
-      color: "amber",
-    },
-    {
-      id: "t-check",
-      title: "Check Vorrat",
-      note: "Kuehlschrank + Lager",
-      x: 360,
-      y: 220,
-      color: "emerald",
-    },
-    {
-      id: "t-sync",
-      title: "Liste sync",
-      note: "WG fragen -> Items",
-      x: 640,
-      y: 100,
-      color: "sky",
-    },
-  ],
-  connections: [
-    { id: "c1", from: "t-plan", to: "t-sync" },
-    { id: "c2", from: "t-plan", to: "t-check" },
-  ],
-};
+const paletteOrder: ColorToken[] = ["amber", "orange", "emerald", "teal", "sky", "indigo", "rose", "violet"];
 
 const newId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
@@ -206,6 +203,8 @@ type CriticalPathResult = {
   criticalConnectionIds: Set<string>;
   projectDuration: number;
   hasCycle: boolean;
+  ES: Map<string, number>;
+  EF: Map<string, number>;
 };
 
 function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): CriticalPathResult {
@@ -214,6 +213,8 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
     criticalConnectionIds: new Set(),
     projectDuration: 0,
     hasCycle: false,
+    ES: new Map(),
+    EF: new Map(),
   };
   if (tasks.length === 0 || connections.length === 0) return empty;
 
@@ -297,20 +298,39 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
     }
   }
 
-  return { criticalTaskIds, criticalConnectionIds, projectDuration, hasCycle: false };
+  return { criticalTaskIds, criticalConnectionIds, projectDuration, hasCycle: false, ES, EF };
 }
 
-type ExternalBoard = {
-  tasks: Array<TaskCard & { x: number; y: number }>;
-  connections: TaskConnection[];
+type CrossPickerState = {
+  taskId: string;
+  direction: "in" | "out";
+  selectedPhaseId: string | null;
 };
 
 type TaskBoardProps = {
-  externalBoard?: ExternalBoard | null;
+  initialState?: BoardState;
+  onStateChange?: (state: BoardState) => void;
+  onDrillIn?: (taskId: string, taskTitle: string) => void;
+  externalBoard?: BoardState | null;
   onExternalBoardConsumed?: () => void;
+  /** "phase" = top-level phase board; "task" = task board inside a phase */
+  level?: "phase" | "task";
+  /** Full root board — available only at direct phase level for cross-phase picker */
+  rootBoard?: BoardState;
+  /** Phase task id we're currently viewing */
+  currentPhaseId?: string;
+  /** All cross-phase dependencies (stored at root board level) */
+  crossConnections?: CrossConnection[];
+  onCrossConnectionsChange?: (conns: CrossConnection[]) => void;
+  /** Navigate to a different phase by id (from cross-connection chip) */
+  onNavigateToPhase?: (phaseId: string, phaseTitle: string) => void;
+  /** Breadcrumb-Slot — wird direkt über dem Board-Canvas gerendert */
+  breadcrumbSlot?: ReactNode;
+  /** Variant-Slot — wird unterhalb der Projektkosten gerendert */
+  variantSlot?: ReactNode;
 };
 
-export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardProps = {}) {
+export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoard, onExternalBoardConsumed, level = "task", rootBoard, currentPhaseId, crossConnections, onCrossConnectionsChange, onNavigateToPhase, breadcrumbSlot, variantSlot }: TaskBoardProps = {}) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
     id: string;
@@ -321,19 +341,21 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
     originY: number;
     moved: boolean;
   } | null>(null);
+  // track whether the last pointer interaction was a drag — prevents click-to-drill on drag
+  const wasMovedRef = useRef(false);
 
-  const [tasks, setTasks] = useState<TaskCard[]>(fallbackBoard.tasks);
-  const [connections, setConnections] = useState<TaskConnection[]>(fallbackBoard.connections);
+  const [tasks, setTasks] = useState<TaskCard[]>(initialState?.tasks ?? []);
+  const [connections, setConnections] = useState<TaskConnection[]>(initialState?.connections ?? []);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftNote, setDraftNote] = useState("");
   const [draftColor, setDraftColor] = useState<ColorToken>(paletteOrder[0]);
   const [linkSource, setLinkSource] = useState<string | null>(null);
-  const [isHydrated, setIsHydrated] = useState(false);
-  const [view, setView] = useState<"board" | "table">("board");
+  const [view, setView] = useState<"board" | "table" | "gantt">("board");
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [draftTodo, setDraftTodo] = useState("");
   const [draftComment, setDraftComment] = useState("");
   const [draftCommentImage, setDraftCommentImage] = useState<string | null>(null);
+  const [crossPicker, setCrossPicker] = useState<CrossPickerState | null>(null);
 
   // Load external board (from wizard)
   useEffect(() => {
@@ -344,41 +366,20 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
       setLinkSource(null);
     });
     onExternalBoardConsumed?.();
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalBoard]);
 
+  // Notify parent of state changes so they can persist to DB
+  // Skip on first mount — initialState already came from rootBoard, no need to echo it back
+  const hasMountedRef = useRef(false);
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        startTransition(() => setIsHydrated(true));
-        return;
-      }
-      const parsed = JSON.parse(raw) as PersistedBoard;
-      startTransition(() => {
-        if (Array.isArray(parsed.tasks)) {
-          setTasks(parsed.tasks);
-        }
-        if (Array.isArray(parsed.connections)) {
-          setConnections(parsed.connections);
-        }
-        setIsHydrated(true);
-      });
-    } catch (error) {
-      console.warn("Task board state invalid, fallback used", error);
-      startTransition(() => setIsHydrated(true));
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
     }
-  }, []);
-
-  useEffect(() => {
-    if (!isHydrated || typeof window === "undefined") return;
-    const payload: PersistedBoard = { tasks, connections };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [tasks, connections, isHydrated]);
+    onStateChange?.({ tasks, connections });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, connections]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -418,6 +419,7 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
     const handlePointerUp = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (drag && drag.pointerId === event.pointerId) {
+        wasMovedRef.current = drag.moved;
         dragRef.current = null;
       }
     };
@@ -470,20 +472,30 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
   };
 
   const handleCardClick = (taskId: string) => {
-    if (!linkSource || linkSource === taskId) return;
-    const sourceId = linkSource;
-    setConnections((prev) => {
-      const exists = prev.some(
-        (connection) =>
-          (connection.from === sourceId && connection.to === taskId) ||
-          (connection.from === taskId && connection.to === sourceId)
-      );
-      if (exists) {
-        return prev;
-      }
-      return [...prev, { id: newId(), from: sourceId, to: taskId }];
-    });
-    setLinkSource(null);
+    // ignore if the interaction was actually a drag
+    if (wasMovedRef.current) {
+      wasMovedRef.current = false;
+      return;
+    }
+    // link mode: connect two cards
+    if (linkSource && linkSource !== taskId) {
+      const sourceId = linkSource;
+      setConnections((prev) => {
+        const exists = prev.some(
+          (connection) =>
+            (connection.from === sourceId && connection.to === taskId) ||
+            (connection.from === taskId && connection.to === sourceId)
+        );
+        if (exists) return prev;
+        return [...prev, { id: newId(), from: sourceId, to: taskId }];
+      });
+      setLinkSource(null);
+      return;
+    }
+    // at phase level (and not in link mode): click drills into the phase
+    if (!linkSource && level === "phase") {
+      onDrillIn?.(taskId, tasks.find((t) => t.id === taskId)?.title ?? "");
+    }
   };
 
   const handleLinkButtonClick = (taskId: string) => {
@@ -491,15 +503,12 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
   };
 
   const handleReset = () => {
-    setTasks(fallbackBoard.tasks);
-    setConnections(fallbackBoard.connections);
+    setTasks([]);
+    setConnections([]);
     setLinkSource(null);
     setDraftTitle("");
     setDraftNote("");
     setDraftColor(paletteOrder[0]);
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
   };
 
   const boardDimensions = useMemo(() => {
@@ -558,68 +567,63 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <form
         onSubmit={handleAddTask}
-        className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:flex sm:flex-wrap sm:items-end sm:gap-4"
+        className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2.5 shadow-sm"
       >
-        <label className="flex-1 text-sm font-semibold text-zinc-700">
-          Task Titel
-          <input
-            type="text"
-            value={draftTitle}
-            onChange={(event) => setDraftTitle(event.target.value)}
-            placeholder="Neue Idee"
-            className="mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2 text-base text-zinc-900 focus:border-zinc-400 focus:outline-none"
-          />
-        </label>
-        <label className="flex-1 text-sm font-semibold text-zinc-700">
-          Notiz (optional)
-          <input
-            type="text"
-            value={draftNote}
-            onChange={(event) => setDraftNote(event.target.value)}
-            placeholder="Details..."
-            className="mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2 text-base text-zinc-900 focus:border-zinc-400 focus:outline-none"
-          />
-        </label>
-        <div className="flex flex-1 flex-col gap-2 text-sm font-semibold text-zinc-700">
-          Farbe
-          <div className="flex flex-wrap gap-2">
-            {paletteOrder.map((color) => {
-              const palette = COLORS[color];
-              const isActive = draftColor === color;
-              return (
-                <button
-                  key={color}
-                  type="button"
-                  onClick={() => setDraftColor(color)}
-                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                    isActive ? `${palette.border} ${palette.text} ring-2 ring-zinc-900` : "border-zinc-200 text-zinc-600"
-                  } ${palette.bg}`}
-                >
-                  <span className="h-2.5 w-2.5 rounded-full bg-current" aria-hidden />
-                  {color}
-                </button>
-              );
-            })}
-          </div>
+        <input
+          type="text"
+          value={draftTitle}
+          onChange={(e) => setDraftTitle(e.target.value)}
+          placeholder={level === "phase" ? "Phase Titel…" : "Task Titel…"}
+          required
+          className="min-w-0 flex-1 rounded-xl border border-transparent px-2.5 py-1.5 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-zinc-300 focus:bg-zinc-50"
+        />
+        <div className="h-5 w-px shrink-0 bg-zinc-100" />
+        <input
+          type="text"
+          value={draftNote}
+          onChange={(e) => setDraftNote(e.target.value)}
+          placeholder={level === "phase" ? "Beschreibung…" : "Notiz…"}
+          className="hidden min-w-0 w-44 rounded-xl border border-transparent px-2.5 py-1.5 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-zinc-300 focus:bg-zinc-50 sm:block"
+        />
+        <div className="h-5 w-px shrink-0 bg-zinc-100" />
+        {/* Compact color dots */}
+        <div className="flex shrink-0 items-center gap-1.5" title="Farbe wählen">
+          {paletteOrder.map((color) => {
+            const DOT_COLORS: Record<string, string> = {
+              amber: "#f59e0b", orange: "#f97316", emerald: "#10b981", teal: "#14b8a6",
+              sky: "#0ea5e9", indigo: "#6366f1", rose: "#f43f5e", violet: "#8b5cf6",
+            };
+            const isActive = draftColor === color;
+            return (
+              <button
+                key={color}
+                type="button"
+                title={COLORS[color].label}
+                onClick={() => setDraftColor(color)}
+                className={`rounded-full transition ${isActive ? "ring-2 ring-offset-1 ring-zinc-700 scale-125" : "opacity-60 hover:opacity-100 hover:scale-110"}`}
+                style={{ width: 14, height: 14, background: DOT_COLORS[color] }}
+              />
+            );
+          })}
         </div>
         <button
           type="submit"
-          className="mt-3 inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2 text-base font-semibold text-white transition hover:bg-zinc-800 sm:mt-0"
+          className="shrink-0 rounded-xl bg-zinc-900 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-zinc-700"
         >
-          Task anlegen
+          {level === "phase" ? "Phase anlegen" : "Task anlegen"}
         </button>
       </form>
 
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-xl border border-zinc-200 bg-zinc-50 p-1">
           <button
             type="button"
             onClick={() => setView("board")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
               view === "board" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             }`}
           >
@@ -628,11 +632,20 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
           <button
             type="button"
             onClick={() => setView("table")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
               view === "table" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             }`}
           >
             Tabelle
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("gantt")}
+            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+              view === "gantt" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+            }`}
+          >
+            Gantt
           </button>
         </div>
         {view === "board" && (
@@ -641,57 +654,63 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
               type="button"
               onClick={handleAutoLayout}
               disabled={connections.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
               title="Tasks automatisch nach Prozessfluss anordnen"
             >
               ⬡ Auto-Layout
             </button>
-            <span className="text-xs text-zinc-400">
-              {linkSource ? "Klick auf Zielkarte verbindet" : "Drag = verschieben \u00b7 \u2301 = verlinken"}
+            <span className="hidden text-xs text-zinc-400 sm:inline">
+              {linkSource ? "Klick auf Zielkarte verbindet" : "Drag = verschieben · ⌃ = verlinken"}
             </span>
           </>
         )}
         <button
           type="button"
           onClick={handleReset}
-          className="ml-auto inline-flex items-center gap-1 rounded-full border border-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-100"
+          className="ml-auto rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-500 hover:bg-zinc-50 transition"
         >
           Reset Board
         </button>
       </div>
 
-      {/* Critical path info strip */}
-      {view === "board" && !criticalPath.hasCycle && criticalPath.projectDuration > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-orange-100 bg-orange-50/70 px-3 py-2 text-xs">
-          <span className="font-semibold text-orange-800">Kritischer Weg</span>
-          <span className="text-zinc-700">
-            Projektdauer: <strong>{criticalPath.projectDuration} Tage</strong>
-          </span>
-          <span className="text-zinc-300">|</span>
-          <span className="text-zinc-500">Orangene Knoten &amp; Kanten = kein Zeitpuffer</span>
+      {/* Info row: critical path + costs — compact single line */}
+      {view === "board" && (criticalPath.projectDuration > 0 || tasks.length > 0) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-xs text-zinc-500">
+          {!criticalPath.hasCycle && criticalPath.projectDuration > 0 && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-orange-400" />
+              <span className="font-semibold text-orange-700">Kritischer Weg</span>
+              <span>Projektdauer: <strong className="text-zinc-700">{criticalPath.projectDuration} Tage</strong></span>
+              <span className="hidden text-zinc-300 sm:inline">·</span>
+              <span className="hidden text-zinc-400 sm:inline">Orangene Knoten &amp; Kanten = kein Zeitpuffer</span>
+            </span>
+          )}
+          {tasks.length > 0 && (
+            <span className="flex items-center gap-1.5">
+              <span className="font-semibold text-zinc-600">Projektkosten</span>
+              <span className="tabular-nums">
+                {tasks.reduce((s, t) => s + (t.duration ?? 1), 0)} Tage × {HOURS_PER_DAY}h × CHF {HOURLY_RATE} ={" "}
+                <strong className="text-zinc-800">{formatChf(totalPrice)}</strong>
+              </span>
+            </span>
+          )}
         </div>
       )}
 
-      {/* Price summary */}
-      {view === "board" && tasks.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2 text-xs">
-          <span className="font-semibold text-zinc-700">Projektkosten</span>
-          <span className="tabular-nums text-zinc-600">
-            {tasks.reduce((s, t) => s + (t.duration ?? 1), 0)} Tage &times; {HOURS_PER_DAY}h &times; CHF {HOURLY_RATE} ={" "}
-            <strong className="text-zinc-800">{formatChf(totalPrice)}</strong>
-          </span>
-        </div>
-      )}
+      {/* Variant-Slot — unterhalb der Projektkosten */}
+      {variantSlot}
 
       {/* Board view */}
       {view === "board" && (
         <>
           {linkSource ? (
-            <div className="rounded-2xl border border-dashed border-zinc-300 bg-white/70 px-4 py-2 text-sm text-zinc-700">
+            <div className="rounded-xl border border-dashed border-zinc-200 bg-white/70 px-3 py-1.5 text-xs text-zinc-600">
               Verbinde ab{" "}
-              <span className="font-semibold">{tasks.find((t) => t.id === linkSource)?.title ?? ""}</span>. Klick auf Zielkarte oder Reset zum Abbrechen.
+              <span className="font-semibold">{tasks.find((t) => t.id === linkSource)?.title ?? ""}</span> — Klick auf Zielkarte oder Reset zum Abbrechen.
             </div>
           ) : null}
+
+          {breadcrumbSlot}
 
           <div
             ref={boardRef}
@@ -736,7 +755,9 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
               return (
                 <article
                   key={task.id}
-                  className={`absolute w-[224px] cursor-grab rounded-2xl border p-3 text-sm shadow-md transition-shadow ${color.bg} ${color.border} ${color.text} ${
+                  className={`absolute w-[240px] rounded-2xl border p-3 text-sm shadow-md transition-shadow ${color.bg} ${color.border} ${color.text} ${
+                    level === "phase" ? "cursor-pointer" : "cursor-grab"
+                  } ${
                     linkSource === task.id
                       ? "ring-2 ring-zinc-900"
                       : criticalPath.criticalTaskIds.has(task.id)
@@ -748,7 +769,7 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
                   onClick={() => handleCardClick(task.id)}
                 >
                   <div className="flex items-start justify-between gap-1">
-                    <h3 className="flex-1 text-base font-semibold leading-snug">{task.title}</h3>
+                    <h3 className="min-w-0 flex-1 break-words text-base font-semibold leading-snug">{task.title}</h3>
                     <div className="flex shrink-0 items-center gap-0.5">
                       <button
                         type="button"
@@ -776,9 +797,135 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
                       >
                         ⌁
                       </button>
+                      <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDrillIn?.(task.id, task.title); }}
+                        className={`inline-flex h-7 items-center justify-center rounded-full border text-xs transition ${
+                          level === "phase"
+                            ? "gap-1 border-zinc-300 bg-white/80 px-2 font-semibold text-zinc-600 hover:border-zinc-500 hover:text-zinc-900"
+                            : task.subBoard?.tasks?.length
+                            ? "w-7 border-zinc-400 bg-zinc-50 text-zinc-700 font-semibold"
+                            : "w-7 border-transparent text-zinc-400 hover:border-zinc-300 hover:text-zinc-700"
+                        }`}
+                        aria-label={level === "phase" ? "Tasks dieser Phase öffnen" : "Sub-Board öffnen"}
+                        title={level === "phase" ? "Tasks öffnen" : task.subBoard?.tasks?.length ? `Sub-Board (${task.subBoard.tasks.length} Tasks)` : "Reinzoomen / Sub-Board anlegen"}
+                      >
+                        {level === "phase" ? (
+                          <>Tasks <span className="opacity-70">→</span></>
+                        ) : (
+                          "⬎"
+                        )}
+                      </button>
                     </div>
                   </div>
                   {task.note ? <p className="mt-1 text-xs text-zinc-600">{task.note}</p> : null}
+                  {level === "phase" && (task.productName || task.variantLabel) && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {task.productName && (
+                        <span className="inline-block rounded-full bg-black/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide opacity-70">
+                          {task.productName}
+                        </span>
+                      )}
+                      {task.variantLabel && (
+                        <span className="inline-block rounded-full bg-black/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide opacity-70">
+                          ⬡ {task.variantLabel}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {level === "task" && (() => {
+                    const phaseCard = rootBoard?.tasks.find((t) => t.id === currentPhaseId);
+                    if (!phaseCard) return null;
+                    return (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <span className="inline-block rounded-full bg-black/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide opacity-70">
+                          📍 {phaseCard.title}
+                        </span>
+                        {phaseCard.productName && (
+                          <span className="inline-block rounded-full bg-black/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide opacity-70">
+                            {phaseCard.productName}
+                          </span>
+                        )}
+                        {phaseCard.variantLabel && (
+                          <span className="inline-block rounded-full bg-black/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide opacity-70">
+                            ⬡ {phaseCard.variantLabel}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {level === "task" && rootBoard !== undefined && (() => {
+                    const incomingCross = (crossConnections ?? []).filter(
+                      (c) => c.toPhaseId === currentPhaseId && c.toTaskId === task.id
+                    );
+                    const outgoingCross = (crossConnections ?? []).filter(
+                      (c) => c.fromPhaseId === currentPhaseId && c.fromTaskId === task.id
+                    );
+                    const getPhaseTitle = (phaseId: string) =>
+                      rootBoard.tasks.find((t) => t.id === phaseId)?.title ?? "?";
+                    const getTaskTitle = (phaseId: string, taskId: string) =>
+                      rootBoard.tasks.find((t) => t.id === phaseId)?.subBoard?.tasks.find((t) => t.id === taskId)?.title ?? "?";
+                    const otherPhases = rootBoard.tasks.filter((t) => t.id !== currentPhaseId);
+                    return (
+                      <>
+                        {(incomingCross.length > 0 || outgoingCross.length > 0) && (
+                          <div className="mt-2 flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
+                            {incomingCross.map((c) => (
+                              <span key={c.id} className="inline-flex items-center gap-0.5 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+                                <button
+                                  type="button"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); onNavigateToPhase?.(c.fromPhaseId, getPhaseTitle(c.fromPhaseId)); }}
+                                  className="hover:underline"
+                                  title={`Phase öffnen: ${getPhaseTitle(c.fromPhaseId)}`}
+                                >
+                                  ↙ {getPhaseTitle(c.fromPhaseId)}: {getTaskTitle(c.fromPhaseId, c.fromTaskId)}
+                                </button>
+                                <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onCrossConnectionsChange?.((crossConnections ?? []).filter((x) => x.id !== c.id)); }} className="ml-0.5 text-[10px] opacity-60 hover:opacity-100">×</button>
+                              </span>
+                            ))}
+                            {outgoingCross.map((c) => (
+                              <span key={c.id} className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                                <button
+                                  type="button"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); onNavigateToPhase?.(c.toPhaseId, getPhaseTitle(c.toPhaseId)); }}
+                                  className="hover:underline"
+                                  title={`Phase öffnen: ${getPhaseTitle(c.toPhaseId)}`}
+                                >
+                                  ↗ {getPhaseTitle(c.toPhaseId)}: {getTaskTitle(c.toPhaseId, c.toTaskId)}
+                                </button>
+                                <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onCrossConnectionsChange?.((crossConnections ?? []).filter((x) => x.id !== c.id)); }} className="ml-0.5 text-[10px] opacity-60 hover:opacity-100">×</button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {otherPhases.length > 0 && (
+                          <div className="mt-2 flex gap-1" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => { e.stopPropagation(); setCrossPicker({ taskId: task.id, direction: "in", selectedPhaseId: null }); }}
+                              className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600 transition hover:bg-sky-100"
+                              title="Eingang: dieser Task hängt ab von einem Task in einer anderen Phase"
+                            >
+                              ↙ Eingang
+                            </button>
+                            <button
+                              type="button"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => { e.stopPropagation(); setCrossPicker({ taskId: task.id, direction: "out", selectedPhaseId: null }); }}
+                              className="rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600 transition hover:bg-violet-100"
+                              title="Ausgang: dieser Task greift in einen Task einer anderen Phase"
+                            >
+                              ↗ Ausgang
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                   <div className="mt-3 flex items-center justify-between text-[11px] text-zinc-500">
                     <label className="flex cursor-default items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       <input
@@ -806,6 +953,52 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
                 </article>
               );
             })}
+
+            {/* Ghost cards for cross-phase connections */}
+            {level === "task" && rootBoard !== undefined && (() => {
+              const ghostMap = new Map<string, {
+                x: number; y: number;
+                phaseId: string; phaseTitle: string; taskTitle: string;
+                direction: "in" | "out";
+              }>();
+              (crossConnections ?? []).forEach((c) => {
+                if (c.fromPhaseId === currentPhaseId) {
+                  const localTask = tasks.find((t) => t.id === c.fromTaskId);
+                  if (!localTask) return;
+                  const k = `${c.toPhaseId}:${c.toTaskId}`;
+                  if (ghostMap.has(k)) return;
+                  const phaseTitle = rootBoard.tasks.find((t) => t.id === c.toPhaseId)?.title ?? "?";
+                  const taskTitle = rootBoard.tasks.find((t) => t.id === c.toPhaseId)?.subBoard?.tasks.find((t) => t.id === c.toTaskId)?.title ?? "?";
+                  ghostMap.set(k, { x: localTask.x + 250, y: localTask.y, phaseId: c.toPhaseId, phaseTitle, taskTitle, direction: "out" });
+                } else if (c.toPhaseId === currentPhaseId) {
+                  const localTask = tasks.find((t) => t.id === c.toTaskId);
+                  if (!localTask) return;
+                  const k = `${c.fromPhaseId}:${c.fromTaskId}`;
+                  if (ghostMap.has(k)) return;
+                  const phaseTitle = rootBoard.tasks.find((t) => t.id === c.fromPhaseId)?.title ?? "?";
+                  const taskTitle = rootBoard.tasks.find((t) => t.id === c.fromPhaseId)?.subBoard?.tasks.find((t) => t.id === c.fromTaskId)?.title ?? "?";
+                  ghostMap.set(k, { x: localTask.x - 240, y: localTask.y, phaseId: c.fromPhaseId, phaseTitle, taskTitle, direction: "in" });
+                }
+              });
+              return Array.from(ghostMap.entries()).map(([key, g]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className="absolute w-[200px] rounded-2xl border-2 border-dashed border-zinc-300 bg-white/70 px-3 py-2.5 text-left shadow-sm backdrop-blur-sm transition hover:border-zinc-500 hover:bg-white hover:shadow-md"
+                  style={{ transform: `translate(${g.x}px, ${g.y}px)` }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); onNavigateToPhase?.(g.phaseId, g.phaseTitle); }}
+                  title={`Phase "${g.phaseTitle}" öffnen`}
+                >
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
+                    {g.direction === "in" ? "↙ Eingang aus" : "↗ Ausgang in"}
+                  </p>
+                  <p className="mt-0.5 text-[10px] font-semibold text-zinc-500">{g.phaseTitle}</p>
+                  <p className="text-sm font-semibold text-zinc-800">{g.taskTitle}</p>
+                  <p className="mt-1.5 text-[10px] font-medium text-zinc-400 group-hover:text-zinc-600">Phase öffnen →</p>
+                </button>
+              ));
+            })()}
           </div>
 
           {connections.length ? (
@@ -848,7 +1041,7 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
 
       {/* Table view */}
       {view === "table" && (
-        <div className="overflow-x-auto rounded-2xl border border-zinc-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-lg border border-zinc-100">
           <table className="w-full text-sm text-zinc-700">
             <thead>
               <tr className="border-b border-zinc-100 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
@@ -970,6 +1163,196 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
           </table>
         </div>
       )}
+
+      {/* Gantt view */}
+      {view === "gantt" && (() => {
+        if (tasks.length === 0) {
+          return (
+            <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-zinc-200 text-sm text-zinc-400">
+              Noch keine Tasks angelegt.
+            </div>
+          );
+        }
+        const ROW_H = 36;
+        const LABEL_W = 180;
+        const DAY_W = 36;
+        const HEADER_H = 32;
+        const PAD = 12;
+
+        // Determine ES/EF for each task — fall back to sequential if no connections
+        const efMap = new Map<string, number>();
+        const esMap = new Map<string, number>();
+        if (connections.length > 0 && !criticalPath.hasCycle && criticalPath.ES.size > 0) {
+          for (const t of tasks) {
+            esMap.set(t.id, criticalPath.ES.get(t.id) ?? 0);
+            efMap.set(t.id, criticalPath.EF.get(t.id) ?? (criticalPath.ES.get(t.id) ?? 0) + (t.duration ?? 1));
+          }
+        } else {
+          // No connections: show tasks in order, stacked sequentially
+          let cursor = 0;
+          for (const t of tasks) {
+            esMap.set(t.id, cursor);
+            efMap.set(t.id, cursor + (t.duration ?? 1));
+            cursor += (t.duration ?? 1);
+          }
+        }
+
+        const maxDay = Math.max(...tasks.map((t) => efMap.get(t.id) ?? 1), 1);
+        const svgW = LABEL_W + maxDay * DAY_W + PAD * 2;
+        const svgH = HEADER_H + tasks.length * ROW_H + PAD;
+
+        // Bar color map
+        const GANTT_COLORS: Record<string, string> = {
+          amber: "#fbbf24", sky: "#38bdf8", rose: "#fb7185",
+          emerald: "#34d399", violet: "#a78bfa", zinc: "#a1a1aa",
+          orange: "#fb923c", teal: "#2dd4bf",
+        };
+
+        const taskIndex = new Map(tasks.map((t, i) => [t.id, i]));
+
+        return (
+          <div className="overflow-x-auto rounded-xl border border-zinc-100 bg-white shadow-sm">
+            <svg
+              width={svgW}
+              height={svgH}
+              className="block font-sans text-xs"
+              style={{ minWidth: svgW }}
+            >
+              {/* Row backgrounds */}
+              {tasks.map((t, i) => (
+                <rect
+                  key={t.id + "-bg"}
+                  x={0}
+                  y={HEADER_H + i * ROW_H}
+                  width={svgW}
+                  height={ROW_H}
+                  fill={i % 2 === 0 ? "#f9f9fb" : "#ffffff"}
+                />
+              ))}
+
+              {/* Day grid lines + headers */}
+              {Array.from({ length: maxDay + 1 }, (_, d) => (
+                <g key={"day-" + d}>
+                  <line
+                    x1={LABEL_W + d * DAY_W}
+                    y1={HEADER_H}
+                    x2={LABEL_W + d * DAY_W}
+                    y2={svgH - PAD}
+                    stroke="#e4e4e7"
+                    strokeWidth={1}
+                  />
+                  {d < maxDay && (
+                    <text
+                      x={LABEL_W + d * DAY_W + DAY_W / 2}
+                      y={HEADER_H - 8}
+                      textAnchor="middle"
+                      fill="#a1a1aa"
+                      fontSize={10}
+                    >
+                      {d + 1}
+                    </text>
+                  )}
+                </g>
+              ))}
+
+              {/* Dependency arrows */}
+              {connections.map((c) => {
+                const fi = taskIndex.get(c.from);
+                const ti = taskIndex.get(c.to);
+                if (fi === undefined || ti === undefined) return null;
+                const isCritical =
+                  criticalPath.criticalConnectionIds.has(c.id);
+                const x1 = LABEL_W + (efMap.get(c.from) ?? 0) * DAY_W;
+                const y1 = HEADER_H + fi * ROW_H + ROW_H / 2;
+                const x2 = LABEL_W + (esMap.get(c.to) ?? 0) * DAY_W;
+                const y2 = HEADER_H + ti * ROW_H + ROW_H / 2;
+                const mx = (x1 + x2) / 2;
+                return (
+                  <path
+                    key={c.id}
+                    d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
+                    fill="none"
+                    stroke={isCritical ? "#f97316" : "#cbd5e1"}
+                    strokeWidth={isCritical ? 2 : 1.5}
+                    strokeDasharray={isCritical ? undefined : "4 3"}
+                    markerEnd={`url(#gantt-arrow-${isCritical ? "crit" : "norm"})`}
+                  />
+                );
+              })}
+
+              {/* Arrow markers */}
+              <defs>
+                <marker id="gantt-arrow-norm" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0, 6 2.5, 0 5" fill="#cbd5e1" />
+                </marker>
+                <marker id="gantt-arrow-crit" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0, 6 2.5, 0 5" fill="#f97316" />
+                </marker>
+              </defs>
+
+              {/* Bars + labels */}
+              {tasks.map((t, i) => {
+                const es = esMap.get(t.id) ?? 0;
+                const ef = efMap.get(t.id) ?? es + 1;
+                const barX = LABEL_W + es * DAY_W + 2;
+                const barW = Math.max((ef - es) * DAY_W - 4, 4);
+                const barY = HEADER_H + i * ROW_H + 6;
+                const barH = ROW_H - 12;
+                const isCrit = criticalPath.criticalTaskIds.has(t.id);
+                const col = GANTT_COLORS[t.color] ?? "#a1a1aa";
+
+                return (
+                  <g key={t.id}>
+                    {/* Row label */}
+                    <text
+                      x={8}
+                      y={HEADER_H + i * ROW_H + ROW_H / 2 + 4}
+                      fill={isCrit ? "#c2410c" : "#3f3f46"}
+                      fontSize={11}
+                      fontWeight={isCrit ? "700" : "500"}
+                      className="select-none"
+                    >
+                      {isCrit && "● "}
+                      {t.title.length > 18 ? t.title.slice(0, 17) + "…" : t.title}
+                    </text>
+
+                    {/* Bar */}
+                    <rect
+                      x={barX}
+                      y={barY}
+                      width={barW}
+                      height={barH}
+                      rx={4}
+                      fill={col}
+                      opacity={isCrit ? 0.9 : 0.55}
+                    />
+
+                    {/* Duration label on bar */}
+                    {barW > 28 && (
+                      <text
+                        x={barX + barW / 2}
+                        y={barY + barH / 2 + 4}
+                        textAnchor="middle"
+                        fill="#fff"
+                        fontSize={10}
+                        fontWeight="600"
+                        className="select-none"
+                      >
+                        {t.duration ?? 1}d
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* Header separator */}
+              <line x1={0} y1={HEADER_H} x2={svgW} y2={HEADER_H} stroke="#e4e4e7" strokeWidth={1} />
+              <text x={8} y={HEADER_H - 8} fill="#a1a1aa" fontSize={10} fontWeight="600">TASK</text>
+              <text x={LABEL_W + 4} y={HEADER_H - 8} fill="#a1a1aa" fontSize={10} fontWeight="600">TAG</text>
+            </svg>
+          </div>
+        );
+      })()}
 
       {/* Detail Modal */}
       {detailTaskId !== null && (() => {
@@ -1191,6 +1574,90 @@ export function TaskBoard({ externalBoard, onExternalBoardConsumed }: TaskBoardP
                   </button>
                 </form>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Cross-connection picker */}
+      {crossPicker !== null && rootBoard !== undefined && (() => {
+        const otherPhases = rootBoard.tasks.filter((t) => t.id !== currentPhaseId);
+        const selectedPhase = crossPicker.selectedPhaseId
+          ? rootBoard.tasks.find((t) => t.id === crossPicker.selectedPhaseId)
+          : null;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={() => setCrossPicker(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-zinc-900">
+                  {crossPicker.direction === "in" ? "↙ Eingang: hängt ab von..." : "↗ Ausgang: greift in..."}
+                </h3>
+                <button type="button" onClick={() => setCrossPicker(null)} className="text-zinc-400 hover:text-zinc-700">×</button>
+              </div>
+              {!crossPicker.selectedPhaseId ? (
+                <>
+                  <p className="mb-2 text-xs text-zinc-400">Phase wählen:</p>
+                  <ul className="space-y-1">
+                    {otherPhases.map((phase) => (
+                      <li key={phase.id}>
+                        <button
+                          type="button"
+                          onClick={() => setCrossPicker((prev) => prev ? { ...prev, selectedPhaseId: phase.id } : null)}
+                          className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50"
+                        >
+                          {phase.title}
+                          <span className="ml-auto text-zinc-300">›</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setCrossPicker((prev) => prev ? { ...prev, selectedPhaseId: null } : null)}
+                    className="mb-3 text-xs text-zinc-400 hover:text-zinc-700"
+                  >
+                    ← zurück
+                  </button>
+                  <p className="mb-1 text-xs font-semibold text-zinc-700">{selectedPhase?.title}</p>
+                  <p className="mb-2 text-xs text-zinc-400">Task wählen:</p>
+                  {(selectedPhase?.subBoard?.tasks ?? []).length === 0 ? (
+                    <p className="text-sm italic text-zinc-400">Keine Tasks in dieser Phase.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {(selectedPhase?.subBoard?.tasks ?? []).map((t) => (
+                        <li key={t.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newConn: CrossConnection = {
+                                id: newId(),
+                                fromPhaseId: crossPicker.direction === "in" ? crossPicker.selectedPhaseId! : currentPhaseId!,
+                                fromTaskId: crossPicker.direction === "in" ? t.id : crossPicker.taskId,
+                                toPhaseId: crossPicker.direction === "in" ? currentPhaseId! : crossPicker.selectedPhaseId!,
+                                toTaskId: crossPicker.direction === "in" ? crossPicker.taskId : t.id,
+                              };
+                              onCrossConnectionsChange?.([...(crossConnections ?? []), newConn]);
+                              setCrossPicker(null);
+                            }}
+                            className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-zinc-800 transition hover:bg-zinc-50"
+                          >
+                            {t.title}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
             </div>
           </div>
         );

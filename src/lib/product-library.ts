@@ -3,7 +3,7 @@
 // Each product has base tasks, optional add-on modules, and cross-product link
 // anchors so tasks from different products can be automatically connected.
 
-export type ColorToken = "amber" | "emerald" | "sky" | "rose" | "violet";
+export type ColorToken = "amber" | "orange" | "emerald" | "teal" | "sky" | "indigo" | "rose" | "violet";
 
 export type ProductTask = {
   id: string;       // unique within one product (e.g. "kasse-setup")
@@ -315,6 +315,8 @@ export type GeneratedTask = {
   duration: number;
   x: number;
   y: number;
+  productName?: string;
+  variantLabel?: string;
 };
 
 export type GeneratedConnection = {

@@ -9,7 +9,7 @@ export default async function TasksPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
-      <div className="mx-auto max-w-5xl px-3 py-6 sm:px-6 sm:py-10">
+      <div className="px-3 py-6 sm:px-6 sm:py-10">
         <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Boards</p>
