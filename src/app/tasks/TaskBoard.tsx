@@ -383,6 +383,11 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
   const [draftComment, setDraftComment] = useState("");
   const [draftCommentImage, setDraftCommentImage] = useState<string | null>(null);
   const [crossPicker, setCrossPicker] = useState<CrossPickerState | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editColor, setEditColor] = useState<ColorToken>(paletteOrder[0]);
+  const [ganttAllLevels, setGanttAllLevels] = useState(false);
+  const [expandedPhaseIds, setExpandedPhaseIds] = useState<Set<string>>(new Set());
 
   // Load external board (from wizard)
   useEffect(() => {
@@ -395,6 +400,17 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
     onExternalBoardConsumed?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalBoard]);
+
+  // Sync edit state when detail modal opens (only when detailTaskId changes)
+  useEffect(() => {
+    if (detailTaskId === null) return;
+    const task = tasks.find((t) => t.id === detailTaskId);
+    if (!task) return;
+    setEditTitle(task.title);
+    setEditNote(task.note ?? "");
+    setEditColor(task.color);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailTaskId]);
 
   // Notify parent of state changes so they can persist to DB
   // Skip on first mount — initialState already came from rootBoard, no need to echo it back
@@ -691,6 +707,19 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             </span>
           </>
         )}
+        {view === "gantt" && level === "phase" && (
+          <button
+            type="button"
+            onClick={() => setGanttAllLevels((v) => !v)}
+            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition ${
+              ganttAllLevels
+                ? "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+            }`}
+          >
+            {ganttAllLevels ? "⊟ Nur Phasen" : "⊞ Alle Ebenen"}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleReset}
@@ -796,7 +825,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                   onClick={() => handleCardClick(task.id)}
                 >
                   <div className="flex items-start justify-between gap-1">
-                    <h3 className="min-w-0 flex-1 break-words text-base font-semibold leading-snug">{task.title}</h3>
+                    <h3 className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug line-clamp-2">{task.title}</h3>
                     <div className="flex shrink-0 items-center gap-0.5">
                       <button
                         type="button"
@@ -953,17 +982,50 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                       </>
                     );
                   })()}
+                  {/* Inline task list (phase level only) */}
+                  {level === "phase" && (task.subBoard?.tasks?.length ?? 0) > 0 && (
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedPhaseIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(task.id)) next.delete(task.id);
+                            else next.add(task.id);
+                            return next;
+                          });
+                        }}
+                        className="text-[10px] font-semibold opacity-60 hover:opacity-100 transition"
+                      >
+                        {expandedPhaseIds.has(task.id) ? "▲ einklappen" : `▼ ${task.subBoard!.tasks.length} Tasks`}
+                      </button>
+                      {expandedPhaseIds.has(task.id) && (
+                        <ul className="mt-1.5 max-h-28 space-y-0.5 overflow-y-auto">
+                          {task.subBoard!.tasks.map((st) => (
+                            <li key={st.id} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-black/[0.07]">
+                              <span className="flex-1 truncate">{st.title}</span>
+                              {st.duration !== undefined && (
+                                <span className="shrink-0 opacity-50">{fmtDuration(toHours(st.duration, st.unit))}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-3 flex items-center justify-between text-[11px] text-zinc-500">
                     <div className="flex cursor-default items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="number"
-                        min={1}
+                        min={0.01}
+                        step={0.1}
                         max={9999}
                         value={task.duration ?? 1}
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
                         onChange={(e) => {
-                          const val = Math.max(1, parseInt(e.target.value) || 1);
+                          const val = Math.max(0.01, parseFloat(e.target.value) || 0.01);
                           setTasks((prev) =>
                             prev.map((t) => (t.id === task.id ? { ...t, duration: val } : t))
                           );
@@ -1149,11 +1211,12 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                         <div className="flex items-center gap-1">
                           <input
                             type="number"
-                            min={1}
+                            min={0.01}
+                            step={0.1}
                             max={9999}
                             value={task.duration ?? 1}
                             onChange={(e) => {
-                              const val = Math.max(1, parseInt(e.target.value) || 1);
+                              const val = Math.max(0.01, parseFloat(e.target.value) || 0.01);
                               setTasks((prev) =>
                                 prev.map((t) => (t.id === task.id ? { ...t, duration: val } : t))
                               );
@@ -1268,9 +1331,41 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           }
         }
 
-        const maxHours = Math.max(...tasks.map((t) => efMap.get(t.id) ?? 1), 1);
+        // Sort tasks by earliest start
+        const sortedGanttTasks = [...tasks].sort((a, b) => (esMap.get(a.id) ?? 0) - (esMap.get(b.id) ?? 0));
+
+        // Build flat gantt rows (optionally including sub-tasks of phases)
+        type GanttRow = { id: string; title: string; color: ColorToken; duration: number; unit?: "h" | "d"; indent: number; absoluteES: number; absoluteEF: number; isCritical: boolean; };
+        let ganttRows: GanttRow[];
+        if (ganttAllLevels && level === "phase") {
+          ganttRows = [];
+          for (const phase of sortedGanttTasks) {
+            const phaseES = esMap.get(phase.id) ?? 0;
+            const phaseEF = efMap.get(phase.id) ?? phaseES + toHours(phase.duration ?? 1, phase.unit);
+            ganttRows.push({ id: phase.id, title: phase.title, color: phase.color, duration: phase.duration ?? 1, unit: phase.unit, indent: 0, absoluteES: phaseES, absoluteEF: phaseEF, isCritical: criticalPath.criticalTaskIds.has(phase.id) });
+            if (phase.subBoard?.tasks?.length) {
+              const subCPM = computeCriticalPath(phase.subBoard.tasks, phase.subBoard.connections ?? []);
+              const subES = new Map<string, number>();
+              const subEF = new Map<string, number>();
+              if (!subCPM.hasCycle && subCPM.ES.size > 0) {
+                for (const st of phase.subBoard.tasks) { subES.set(st.id, subCPM.ES.get(st.id) ?? 0); subEF.set(st.id, subCPM.EF.get(st.id) ?? 0); }
+              } else {
+                let cur = 0;
+                for (const st of phase.subBoard.tasks) { const d = toHours(st.duration ?? 1, st.unit); subES.set(st.id, cur); subEF.set(st.id, cur + d); cur += d; }
+              }
+              const sortedSubs = [...phase.subBoard.tasks].sort((a, b) => (subES.get(a.id) ?? 0) - (subES.get(b.id) ?? 0));
+              for (const st of sortedSubs) {
+                ganttRows.push({ id: `${phase.id}:${st.id}`, title: st.title, color: st.color, duration: st.duration ?? 1, unit: st.unit, indent: 1, absoluteES: phaseES + (subES.get(st.id) ?? 0), absoluteEF: phaseES + (subEF.get(st.id) ?? toHours(st.duration ?? 1, st.unit)), isCritical: subCPM.criticalTaskIds.has(st.id) });
+              }
+            }
+          }
+        } else {
+          ganttRows = sortedGanttTasks.map((t) => ({ id: t.id, title: t.title, color: t.color, duration: t.duration ?? 1, unit: t.unit, indent: 0, absoluteES: esMap.get(t.id) ?? 0, absoluteEF: efMap.get(t.id) ?? (esMap.get(t.id) ?? 0) + toHours(t.duration ?? 1, t.unit), isCritical: criticalPath.criticalTaskIds.has(t.id) }));
+        }
+
+        const maxHours = Math.max(...ganttRows.map((r) => r.absoluteEF), 1);
         const svgW = LABEL_W + maxHours * HR_W + PAD * 2;
-        const svgH = HEADER_H + tasks.length * ROW_H + PAD;
+        const svgH = HEADER_H + ganttRows.length * ROW_H + PAD;
 
         const GANTT_COLORS: Record<string, string> = {
           amber: "#fbbf24", sky: "#38bdf8", rose: "#fb7185",
@@ -1278,7 +1373,8 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           orange: "#fb923c", teal: "#2dd4bf", indigo: "#818cf8",
         };
 
-        const taskIndex = new Map(tasks.map((t, i) => [t.id, i]));
+        // Row index by id (for dependency arrows)
+        const rowIndex = new Map(ganttRows.map((r, i) => [r.id, i]));
 
         // Build tick marks: every 8h = 1 day; also every 1h if total ≤ 24h
         const dayTicks: number[] = [];
@@ -1294,14 +1390,14 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               style={{ minWidth: svgW }}
             >
               {/* Row backgrounds */}
-              {tasks.map((t, i) => (
+              {ganttRows.map((r, i) => (
                 <rect
-                  key={t.id + "-bg"}
+                  key={r.id + "-bg"}
                   x={0}
                   y={HEADER_H + i * ROW_H}
                   width={svgW}
                   height={ROW_H}
-                  fill={i % 2 === 0 ? "#f9f9fb" : "#ffffff"}
+                  fill={r.indent > 0 ? "#fafafa" : i % 2 === 0 ? "#f9f9fb" : "#ffffff"}
                 />
               ))}
 
@@ -1313,7 +1409,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                     x={LABEL_W + h * HR_W}
                     y={HEADER_H}
                     width={Math.min(HOURS_PER_DAY * HR_W, (maxHours - h) * HR_W)}
-                    height={tasks.length * ROW_H}
+                    height={ganttRows.length * ROW_H}
                     fill="rgba(0,0,0,0.018)"
                   />
                 ) : null
@@ -1383,17 +1479,18 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 </marker>
               </defs>
 
-              {/* Dependency arrows */}
+              {/* Dependency arrows (current board level only) */}
               {connections.map((c) => {
-                const fi = taskIndex.get(c.from);
-                const ti = taskIndex.get(c.to);
+                const fi = rowIndex.get(c.from);
+                const ti = rowIndex.get(c.to);
                 if (fi === undefined || ti === undefined) return null;
                 const isCritical = criticalPath.criticalConnectionIds.has(c.id);
                 const lagH = lagToHours(c.lag, c.lagUnit);
-                const x1 = LABEL_W + (efMap.get(c.from) ?? 0) * HR_W;
+                const fromRow = ganttRows[fi];
+                const toRow = ganttRows[ti];
+                const x1 = LABEL_W + fromRow.absoluteEF * HR_W;
                 const y1 = HEADER_H + fi * ROW_H + ROW_H / 2;
-                // lag bar: show as thin orange or gray stripe between EF and ES_successor
-                const xLagEnd = LABEL_W + ((esMap.get(c.to) ?? 0)) * HR_W;
+                const xLagEnd = LABEL_W + toRow.absoluteES * HR_W;
                 const y2 = HEADER_H + ti * ROW_H + ROW_H / 2;
                 const mx = (x1 + xLagEnd) / 2;
                 return (
@@ -1433,32 +1530,31 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               })}
 
               {/* Bars + labels */}
-              {tasks.map((t, i) => {
-                const es = esMap.get(t.id) ?? 0;
-                const ef = efMap.get(t.id) ?? es + toHours(t.duration ?? 1, t.unit);
-                const barX = LABEL_W + es * HR_W + 2;
-                const barW = Math.max((ef - es) * HR_W - 4, 4);
+              {ganttRows.map((row, i) => {
+                const barX = LABEL_W + row.absoluteES * HR_W + 2;
+                const barW = Math.max((row.absoluteEF - row.absoluteES) * HR_W - 4, 4);
                 const barY = HEADER_H + i * ROW_H + 6;
                 const barH = ROW_H - 12;
-                const isCrit = criticalPath.criticalTaskIds.has(t.id);
-                const col = GANTT_COLORS[t.color] ?? "#a1a1aa";
-                const durH = toHours(t.duration ?? 1, t.unit);
-
+                const col = GANTT_COLORS[row.color] ?? "#a1a1aa";
+                const durH = toHours(row.duration, row.unit);
+                const labelX = row.indent > 0 ? 18 : 8;
+                const maxChars = row.indent > 0 ? 22 : 18;
                 return (
-                  <g key={t.id}>
+                  <g key={row.id}>
+                    {row.indent > 0 && (
+                      <line x1={14} y1={HEADER_H + (i - 0.5) * ROW_H} x2={14} y2={HEADER_H + i * ROW_H + ROW_H / 2} stroke="#d4d4d8" strokeWidth={1} />
+                    )}
                     <text
-                      x={8}
+                      x={labelX}
                       y={HEADER_H + i * ROW_H + ROW_H / 2 + 4}
-                      fill={isCrit ? "#c2410c" : "#3f3f46"}
-                      fontSize={11}
-                      fontWeight={isCrit ? "700" : "500"}
+                      fill={row.isCritical ? "#c2410c" : row.indent > 0 ? "#71717a" : "#3f3f46"}
+                      fontSize={row.indent > 0 ? 9 : 11}
+                      fontWeight={row.isCritical ? "700" : row.indent > 0 ? "400" : "500"}
                       className="select-none"
                     >
-                      {isCrit ? "● " : ""}{t.title.length > 18 ? t.title.slice(0, 17) + "…" : t.title}
+                      {row.isCritical && row.indent === 0 ? "● " : ""}{row.title.length > maxChars ? row.title.slice(0, maxChars - 1) + "…" : row.title}
                     </text>
-
-                    <rect x={barX} y={barY} width={barW} height={barH} rx={4} fill={col} opacity={isCrit ? 0.9 : 0.55} />
-
+                    <rect x={barX} y={barY} width={barW} height={barH} rx={4} fill={col} opacity={row.isCritical ? 0.9 : row.indent > 0 ? 0.4 : 0.55} />
                     {barW > 24 && (
                       <text
                         x={barX + barW / 2}
@@ -1505,14 +1601,42 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             >
               {/* Modal Header */}
               <div className="flex items-start justify-between border-b border-zinc-100 px-5 py-4">
-                <div>
-                  <h2 className="text-base font-semibold text-zinc-900">{dt.title}</h2>
-                  {dt.note && <p className="mt-0.5 text-xs text-zinc-500">{dt.note}</p>}
-                  <p className="mt-1 text-xs font-semibold text-zinc-600">
-                    {formatChf((dt.duration ?? 1) * HOURS_PER_DAY * HOURLY_RATE)}
-                    <span className="ml-1.5 font-normal text-zinc-400">
-                      {(dt.duration ?? 1) * HOURS_PER_DAY} h &middot; {dt.duration ?? 1} d
-                    </span>
+                <div className="min-w-0 flex-1">
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => {
+                      setEditTitle(e.target.value);
+                      setTasks((prev) => prev.map((t) => t.id === detailTaskId ? { ...t, title: e.target.value } : t));
+                    }}
+                    className="-mx-1 w-full rounded border border-transparent px-1 py-0.5 text-base font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:bg-zinc-50 focus:outline-none"
+                    placeholder="Titel…"
+                  />
+                  <input
+                    type="text"
+                    value={editNote}
+                    onChange={(e) => {
+                      setEditNote(e.target.value);
+                      setTasks((prev) => prev.map((t) => t.id === detailTaskId ? { ...t, note: e.target.value || undefined } : t));
+                    }}
+                    className="-mx-1 mt-0.5 w-full rounded border border-transparent px-1 py-0.5 text-xs text-zinc-500 hover:border-zinc-200 focus:border-zinc-300 focus:bg-zinc-50 focus:outline-none"
+                    placeholder="Notiz…"
+                  />
+                  <div className="mt-2 flex items-center gap-1.5">
+                    {paletteOrder.map((pc) => {
+                      const DOT_C: Record<string, string> = { amber: "#f59e0b", orange: "#f97316", emerald: "#10b981", teal: "#14b8a6", sky: "#0ea5e9", indigo: "#6366f1", rose: "#f43f5e", violet: "#8b5cf6" };
+                      return (
+                        <button key={pc} type="button" title={COLORS[pc].label}
+                          onClick={() => { setEditColor(pc); setTasks((prev) => prev.map((t) => t.id === detailTaskId ? { ...t, color: pc } : t)); }}
+                          className={`rounded-full transition ${editColor === pc ? "scale-125 ring-2 ring-zinc-700 ring-offset-1" : "opacity-50 hover:opacity-100 hover:scale-110"}`}
+                          style={{ width: 12, height: 12, background: DOT_C[pc] }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-xs font-semibold text-zinc-600">
+                    {formatChf(toHours(dt.duration ?? 1, dt.unit) * HOURLY_RATE)}
+                    <span className="ml-1.5 font-normal text-zinc-400">{fmtDuration(toHours(dt.duration ?? 1, dt.unit))}</span>
                   </p>
                 </div>
                 <button
