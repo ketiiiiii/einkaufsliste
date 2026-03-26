@@ -33,6 +33,7 @@ export type TaskCard = {
   color: ColorToken;
   duration?: number; // Durchlaufzeit, Einheit via unit
   unit?: "h" | "d"; // "d"=Tage (default), "h"=Stunden
+  iterations?: number; // Anzahl Wiederholungen (iteratives Vorgehen), default 1
   todos?: Todo[];
   comments?: Comment[];
   subBoard?: BoardState; // nested sub-board for drill-in
@@ -98,6 +99,9 @@ const paletteOrder: ColorToken[] = ["amber", "orange", "emerald", "teal", "sky",
 // --- Duration helpers ---
 const toHours = (duration: number, unit?: "h" | "d") =>
   unit === "h" ? duration : duration * HOURS_PER_DAY;
+/** Effective hours including iterations (for CPM, Gantt, cost) */
+const effectiveHours = (t: { duration?: number; unit?: "h" | "d"; iterations?: number }) =>
+  toHours(t.duration ?? 1, t.unit) * Math.max(1, t.iterations ?? 1);
 const lagToHours = (lag: number | undefined, lagUnit?: "h" | "d") =>
   lag ? (lagUnit === "d" ? lag * HOURS_PER_DAY : lag) : 0;
 const fmtDuration = (hours: number) => {
@@ -277,7 +281,7 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
   const EF = new Map<string, number>();
   for (const id of topoOrder) {
     const task = tasks.find((t) => t.id === id)!;
-    const dur = toHours(task.duration ?? 1, task.unit);
+    const dur = effectiveHours(task);
     const preds = predecessors.get(id) ?? [];
     const es = preds.length === 0 ? 0 : Math.max(...preds.map((p) => {
       const conn = connLookup.get(`${p}:${id}`);
@@ -294,7 +298,7 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
   const LS = new Map<string, number>();
   for (const id of [...topoOrder].reverse()) {
     const task = tasks.find((t) => t.id === id)!;
-    const dur = toHours(task.duration ?? 1, task.unit);
+    const dur = effectiveHours(task);
     const succs = successors.get(id) ?? [];
     const lf = succs.length === 0 ? projectDuration : Math.min(...succs.map((s) => {
       const conn = connLookup.get(`${id}:${s}`);
@@ -570,7 +574,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
   const criticalPath = useMemo(() => computeCriticalPath(tasks, connections), [tasks, connections]);
 
   const totalPrice = useMemo(
-    () => tasks.reduce((sum, t) => sum + toHours(t.duration ?? 1, t.unit), 0) * HOURLY_RATE,
+    () => tasks.reduce((sum, t) => sum + effectiveHours(t), 0) * HOURLY_RATE,
     [tasks]
   );
 
@@ -745,7 +749,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             <span className="flex items-center gap-1.5">
               <span className="font-semibold text-zinc-600">Projektkosten</span>
               <span className="tabular-nums">
-                {fmtDuration(tasks.reduce((s, t) => s + toHours(t.duration ?? 1, t.unit), 0))} × CHF {HOURLY_RATE} ={" "}
+                {fmtDuration(tasks.reduce((s, t) => s + effectiveHours(t), 0))} × CHF {HOURLY_RATE} ={" "}
                 <strong className="text-zinc-800">{formatChf(totalPrice)}</strong>
               </span>
             </span>
@@ -808,10 +812,23 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             </svg>
             {tasks.map((task) => {
               const color = COLORS[task.color];
+              const iters = Math.max(1, task.iterations ?? 1);
+              const isIterative = iters > 1;
               return (
-                <article
+                <div
                   key={task.id}
-                  className={`absolute w-[240px] rounded-2xl border p-3 text-sm shadow-md transition-shadow ${color.bg} ${color.border} ${color.text} ${
+                  className="absolute"
+                  style={{ transform: `translate(${task.x}px, ${task.y}px)` }}
+                >
+                  {/* Stapel-Effekt: Schattenebenen für iterative Kacheln */}
+                  {isIterative && (
+                    <>
+                      <div className={`absolute w-[240px] rounded-2xl border ${color.border} ${color.bg} opacity-40`} style={{ top: 8, left: 8, height: CARD_HEIGHT }} aria-hidden />
+                      {iters >= 3 && <div className={`absolute w-[240px] rounded-2xl border ${color.border} ${color.bg} opacity-25`} style={{ top: 16, left: 16, height: CARD_HEIGHT }} aria-hidden />}
+                    </>
+                  )}
+                <article
+                  className={`relative w-[240px] rounded-2xl border p-3 text-sm shadow-md transition-shadow ${color.bg} ${color.border} ${color.text} ${
                     level === "phase" ? "cursor-pointer" : "cursor-grab"
                   } ${
                     linkSource === task.id
@@ -820,12 +837,18 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                       ? "ring-2 ring-orange-400 shadow-orange-100"
                       : ""
                   }`}
-                  style={{ transform: `translate(${task.x}px, ${task.y}px)` }}
                   onPointerDown={(event) => handlePointerDown(task.id, event)}
                   onClick={() => handleCardClick(task.id)}
                 >
                   <div className="flex items-start justify-between gap-1">
-                    <h3 className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug line-clamp-2">{task.title}</h3>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="break-words text-sm font-semibold leading-snug line-clamp-2">{task.title}</h3>
+                      {isIterative && (
+                        <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-black/[0.09] px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide">
+                          ↺ {iters}× iterativ
+                        </span>
+                      )}
+                    </div>
                     <div className="flex shrink-0 items-center gap-0.5">
                       <button
                         type="button"
@@ -1044,10 +1067,11 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                       </button>
                     </div>
                     <span className="font-semibold tabular-nums text-zinc-600">
-                      {formatChf(toHours(task.duration ?? 1, task.unit) * HOURLY_RATE)}
+                      {formatChf(effectiveHours(task) * HOURLY_RATE)}
                     </span>
                   </div>
                 </article>
+                </div>
               );
             })}
 
@@ -1319,12 +1343,12 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         if (connections.length > 0 && !criticalPath.hasCycle && criticalPath.ES.size > 0) {
           for (const t of tasks) {
             esMap.set(t.id, criticalPath.ES.get(t.id) ?? 0);
-            efMap.set(t.id, criticalPath.EF.get(t.id) ?? (criticalPath.ES.get(t.id) ?? 0) + toHours(t.duration ?? 1, t.unit));
+            efMap.set(t.id, criticalPath.EF.get(t.id) ?? (criticalPath.ES.get(t.id) ?? 0) + effectiveHours(t));
           }
         } else {
           let cursor = 0;
           for (const t of tasks) {
-            const dur = toHours(t.duration ?? 1, t.unit);
+            const dur = effectiveHours(t);
             esMap.set(t.id, cursor);
             efMap.set(t.id, cursor + dur);
             cursor += dur;
@@ -1335,14 +1359,14 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         const sortedGanttTasks = [...tasks].sort((a, b) => (esMap.get(a.id) ?? 0) - (esMap.get(b.id) ?? 0));
 
         // Build flat gantt rows (optionally including sub-tasks of phases)
-        type GanttRow = { id: string; title: string; color: ColorToken; duration: number; unit?: "h" | "d"; indent: number; absoluteES: number; absoluteEF: number; isCritical: boolean; };
+        type GanttRow = { id: string; title: string; color: ColorToken; duration: number; unit?: "h" | "d"; iterations?: number; indent: number; absoluteES: number; absoluteEF: number; isCritical: boolean; };
         let ganttRows: GanttRow[];
         if (ganttAllLevels && level === "phase") {
           ganttRows = [];
           for (const phase of sortedGanttTasks) {
             const phaseES = esMap.get(phase.id) ?? 0;
-            const phaseEF = efMap.get(phase.id) ?? phaseES + toHours(phase.duration ?? 1, phase.unit);
-            ganttRows.push({ id: phase.id, title: phase.title, color: phase.color, duration: phase.duration ?? 1, unit: phase.unit, indent: 0, absoluteES: phaseES, absoluteEF: phaseEF, isCritical: criticalPath.criticalTaskIds.has(phase.id) });
+            const phaseEF = efMap.get(phase.id) ?? phaseES + effectiveHours(phase);
+            ganttRows.push({ id: phase.id, title: phase.title, color: phase.color, duration: phase.duration ?? 1, unit: phase.unit, iterations: phase.iterations, indent: 0, absoluteES: phaseES, absoluteEF: phaseEF, isCritical: criticalPath.criticalTaskIds.has(phase.id) });
             if (phase.subBoard?.tasks?.length) {
               const subCPM = computeCriticalPath(phase.subBoard.tasks, phase.subBoard.connections ?? []);
               const subES = new Map<string, number>();
@@ -1351,16 +1375,16 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 for (const st of phase.subBoard.tasks) { subES.set(st.id, subCPM.ES.get(st.id) ?? 0); subEF.set(st.id, subCPM.EF.get(st.id) ?? 0); }
               } else {
                 let cur = 0;
-                for (const st of phase.subBoard.tasks) { const d = toHours(st.duration ?? 1, st.unit); subES.set(st.id, cur); subEF.set(st.id, cur + d); cur += d; }
+                for (const st of phase.subBoard.tasks) { const d = effectiveHours(st); subES.set(st.id, cur); subEF.set(st.id, cur + d); cur += d; }
               }
               const sortedSubs = [...phase.subBoard.tasks].sort((a, b) => (subES.get(a.id) ?? 0) - (subES.get(b.id) ?? 0));
               for (const st of sortedSubs) {
-                ganttRows.push({ id: `${phase.id}:${st.id}`, title: st.title, color: st.color, duration: st.duration ?? 1, unit: st.unit, indent: 1, absoluteES: phaseES + (subES.get(st.id) ?? 0), absoluteEF: phaseES + (subEF.get(st.id) ?? toHours(st.duration ?? 1, st.unit)), isCritical: subCPM.criticalTaskIds.has(st.id) });
+                ganttRows.push({ id: `${phase.id}:${st.id}`, title: st.title, color: st.color, duration: st.duration ?? 1, unit: st.unit, iterations: st.iterations, indent: 1, absoluteES: phaseES + (subES.get(st.id) ?? 0), absoluteEF: phaseES + (subEF.get(st.id) ?? effectiveHours(st)), isCritical: subCPM.criticalTaskIds.has(st.id) });
               }
             }
           }
         } else {
-          ganttRows = sortedGanttTasks.map((t) => ({ id: t.id, title: t.title, color: t.color, duration: t.duration ?? 1, unit: t.unit, indent: 0, absoluteES: esMap.get(t.id) ?? 0, absoluteEF: efMap.get(t.id) ?? (esMap.get(t.id) ?? 0) + toHours(t.duration ?? 1, t.unit), isCritical: criticalPath.criticalTaskIds.has(t.id) }));
+          ganttRows = sortedGanttTasks.map((t) => ({ id: t.id, title: t.title, color: t.color, duration: t.duration ?? 1, unit: t.unit, iterations: t.iterations, indent: 0, absoluteES: esMap.get(t.id) ?? 0, absoluteEF: efMap.get(t.id) ?? (esMap.get(t.id) ?? 0) + effectiveHours(t), isCritical: criticalPath.criticalTaskIds.has(t.id) }));
         }
 
         const maxHours = Math.max(...ganttRows.map((r) => r.absoluteEF), 1);
@@ -1537,6 +1561,8 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 const barH = ROW_H - 12;
                 const col = GANTT_COLORS[row.color] ?? "#a1a1aa";
                 const durH = toHours(row.duration, row.unit);
+                const iters = Math.max(1, row.iterations ?? 1);
+                const singleBarW = iters > 1 ? Math.max((barW - (iters - 1) * 3) / iters, 2) : barW;
                 const labelX = row.indent > 0 ? 18 : 8;
                 const maxChars = row.indent > 0 ? 22 : 18;
                 return (
@@ -1554,19 +1580,54 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                     >
                       {row.isCritical && row.indent === 0 ? "● " : ""}{row.title.length > maxChars ? row.title.slice(0, maxChars - 1) + "…" : row.title}
                     </text>
-                    <rect x={barX} y={barY} width={barW} height={barH} rx={4} fill={col} opacity={row.isCritical ? 0.9 : row.indent > 0 ? 0.4 : 0.55} />
-                    {barW > 24 && (
-                      <text
-                        x={barX + barW / 2}
-                        y={barY + barH / 2 + 4}
-                        textAnchor="middle"
-                        fill="#fff"
-                        fontSize={9}
-                        fontWeight="600"
-                        className="select-none"
-                      >
-                        {fmtDuration(durH)}
-                      </text>
+                    {iters > 1 ? (
+                      // Iterative: N segmented bars
+                      <>
+                        {Array.from({ length: iters }, (_, si) => {
+                          const segX = barX + si * (singleBarW + 3);
+                          return (
+                            <rect
+                              key={si}
+                              x={segX} y={barY}
+                              width={singleBarW} height={barH}
+                              rx={3}
+                              fill={col}
+                              opacity={row.isCritical ? 0.9 - si * 0.06 : 0.55 - si * 0.05}
+                            />
+                          );
+                        })}
+                        {/* ↺ Nx label centered over all segments */}
+                        {barW > 32 && (
+                          <text
+                            x={barX + barW / 2}
+                            y={barY + barH / 2 + 4}
+                            textAnchor="middle"
+                            fill="#fff"
+                            fontSize={9}
+                            fontWeight="700"
+                            className="select-none"
+                          >
+                            ↺ {iters}× {fmtDuration(durH)}
+                          </text>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <rect x={barX} y={barY} width={barW} height={barH} rx={4} fill={col} opacity={row.isCritical ? 0.9 : row.indent > 0 ? 0.4 : 0.55} />
+                        {barW > 24 && (
+                          <text
+                            x={barX + barW / 2}
+                            y={barY + barH / 2 + 4}
+                            textAnchor="middle"
+                            fill="#fff"
+                            fontSize={9}
+                            fontWeight="600"
+                            className="select-none"
+                          >
+                            {fmtDuration(durH)}
+                          </text>
+                        )}
+                      </>
                     )}
                   </g>
                 );
@@ -1634,19 +1695,61 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                       );
                     })}
                   </div>
+                  {/* Iterationen-Stepper */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-xs font-semibold text-zinc-500">↺ Iterationen</span>
+                    <div className="flex items-center rounded-lg border border-zinc-200 bg-zinc-50 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setTasks((prev) => prev.map((t) => t.id === detailTaskId ? { ...t, iterations: Math.max(1, (t.iterations ?? 1) - 1) } : t))}
+                        className="px-2 py-0.5 text-sm font-bold text-zinc-500 hover:bg-zinc-200 transition"
+                      >−</button>
+                      <span className="min-w-[1.5rem] text-center text-xs font-semibold text-zinc-800 tabular-nums px-1">
+                        {dt.iterations ?? 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setTasks((prev) => prev.map((t) => t.id === detailTaskId ? { ...t, iterations: (t.iterations ?? 1) + 1 } : t))}
+                        className="px-2 py-0.5 text-sm font-bold text-zinc-500 hover:bg-zinc-200 transition"
+                      >+</button>
+                    </div>
+                    {(dt.iterations ?? 1) > 1 && (
+                      <span className="text-[10px] text-zinc-400">
+                        = {fmtDuration(effectiveHours(dt))} gesamt
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-1.5 text-xs font-semibold text-zinc-600">
-                    {formatChf(toHours(dt.duration ?? 1, dt.unit) * HOURLY_RATE)}
-                    <span className="ml-1.5 font-normal text-zinc-400">{fmtDuration(toHours(dt.duration ?? 1, dt.unit))}</span>
+                    {formatChf(effectiveHours(dt) * HOURLY_RATE)}
+                    <span className="ml-1.5 font-normal text-zinc-400">{fmtDuration(effectiveHours(dt))}</span>
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  className="ml-4 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 text-sm text-zinc-500 hover:bg-zinc-100"
-                  aria-label="Modal schliessen"
-                >
-                  &times;
-                </button>
+                <div className="ml-4 flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTasks((prev) => prev.filter((t) => t.id !== detailTaskId));
+                      setConnections((prev) => prev.filter((c) => c.from !== detailTaskId && c.to !== detailTaskId));
+                      closeModal();
+                    }}
+                    className="inline-flex h-8 items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 text-xs font-semibold text-rose-600 transition hover:border-rose-400 hover:bg-rose-100"
+                    aria-label={level === "phase" ? "Phase löschen" : "Task löschen"}
+                    title={level === "phase" ? "Phase löschen" : "Task löschen"}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden>
+                      <path d="M1.5 3h8M4 3V2h3v1M4.5 5v3.5M6.5 5v3.5M2.5 3l.5 6h5l.5-6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    Löschen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 text-sm text-zinc-500 hover:bg-zinc-100"
+                    aria-label="Modal schliessen"
+                  >
+                    &times;
+                  </button>
+                </div>
               </div>
 
               {/* Todos */}
