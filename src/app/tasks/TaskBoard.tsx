@@ -223,6 +223,7 @@ type CriticalPathResult = {
   hasCycle: boolean;
   ES: Map<string, number>;
   EF: Map<string, number>;
+  topoOrder: string[];
 };
 
 function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): CriticalPathResult {
@@ -233,6 +234,7 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
     hasCycle: false,
     ES: new Map(),
     EF: new Map(),
+    topoOrder: [],
   };
   if (tasks.length === 0 || connections.length === 0) return empty;
 
@@ -329,7 +331,7 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
     }
   }
 
-  return { criticalTaskIds, criticalConnectionIds, projectDuration, hasCycle: false, ES, EF };
+  return { criticalTaskIds, criticalConnectionIds, projectDuration, hasCycle: false, ES, EF, topoOrder };
 }
 
 type CrossPickerState = {
@@ -1355,8 +1357,14 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           }
         }
 
-        // Sort tasks by earliest start
-        const sortedGanttTasks = [...tasks].sort((a, b) => (esMap.get(a.id) ?? 0) - (esMap.get(b.id) ?? 0));
+        // Sort tasks by topological (process flow) order, fall back to ES
+        const topoIdx = new Map(criticalPath.topoOrder.map((id, i) => [id, i]));
+        const sortedGanttTasks = [...tasks].sort((a, b) => {
+          const ta = topoIdx.has(a.id) ? topoIdx.get(a.id)! : 9999;
+          const tb = topoIdx.has(b.id) ? topoIdx.get(b.id)! : 9999;
+          if (ta !== tb) return ta - tb;
+          return (esMap.get(a.id) ?? 0) - (esMap.get(b.id) ?? 0);
+        });
 
         // Build flat gantt rows (optionally including sub-tasks of phases)
         type GanttRow = { id: string; title: string; color: ColorToken; duration: number; unit?: "h" | "d"; iterations?: number; indent: number; absoluteES: number; absoluteEF: number; isCritical: boolean; };
@@ -1519,9 +1527,9 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
                 const dstY = HEADER_H + ti * ROW_H + ROW_H / 2;
 
-                // Always simple 3-segment orthogonal: exit right → vertical → horizontal to bar start
-                // Use mid-point X so the vertical segment sits between the two bars
-                const turnX = Math.max(srcX + ELBOW, (srcX + dstX) / 2);
+                // Standard Gantt routing: exit right a fixed amount, go vertical, then horizontal to bar start
+                // turnX stays close to the source bar — no long horizontal spans
+                const turnX = srcX + ELBOW;
                 const arrowPath = `M ${srcX},${srcY} H ${turnX} V ${dstY} H ${dstX}`;
 
                 return (
