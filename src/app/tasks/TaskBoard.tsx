@@ -47,6 +47,8 @@ export type TaskConnection = {
   to: string;
   lag?: number;        // Wartezeit nach dem Vorgänger (Einheit: lagUnit)
   lagUnit?: "h" | "d"; // default "h"
+  loopDuration?: number;     // Gesamtzeit für diesen Loop-Zyklus (nur Back-Edges)
+  loopDurationUnit?: "h" | "d";
 };
 
 export type VariantTab = {
@@ -334,6 +336,70 @@ function computeCriticalPath(tasks: TaskCard[], connections: TaskConnection[]): 
   return { criticalTaskIds, criticalConnectionIds, projectDuration, hasCycle: false, ES, EF, topoOrder };
 }
 
+// ─── Back-Edge Detection (Zyklen / Loops) ────────────────────────────────────
+// Returns the set of connection IDs that form back edges (cycles).
+// CPM and Gantt exclude these; the board renders them as loop arrows.
+function findBackEdges(tasks: TaskCard[], connections: TaskConnection[]): Set<string> {
+  const ids = tasks.map((t) => t.id);
+  const idSet = new Set(ids);
+  const adj = new Map<string, string[]>();
+  const connKey = new Map<string, string>(); // "from:to" -> connId
+  for (const id of ids) adj.set(id, []);
+  for (const c of connections) {
+    if (!idSet.has(c.from) || !idSet.has(c.to)) continue;
+    adj.get(c.from)!.push(c.to);
+    connKey.set(`${c.from}:${c.to}`, c.id);
+  }
+  const backEdges = new Set<string>();
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map<string, number>(ids.map((id) => [id, WHITE]));
+  function dfs(u: string) {
+    color.set(u, GRAY);
+    for (const v of adj.get(u) ?? []) {
+      if (color.get(v) === GRAY) {
+        const cid = connKey.get(`${u}:${v}`);
+        if (cid) backEdges.add(cid);
+      } else if (color.get(v) === WHITE) {
+        dfs(v);
+      }
+    }
+    color.set(u, BLACK);
+  }
+  for (const id of ids) {
+    if (color.get(id) === WHITE) dfs(id);
+  }
+  return backEdges;
+}
+
+/** Returns IDs of forward edges that lie on a cycle (used only for visual styling). */
+function findCycleEdgeIds(tasks: TaskCard[], connections: TaskConnection[], backEdges: Set<string>): Set<string> {
+  if (backEdges.size === 0) return new Set();
+  const idSet = new Set(tasks.map((t) => t.id));
+  const fwdAdj = new Map<string, string[]>();
+  const revAdj = new Map<string, string[]>();
+  for (const t of tasks) { fwdAdj.set(t.id, []); revAdj.set(t.id, []); }
+  for (const c of connections) {
+    if (backEdges.has(c.id) || !idSet.has(c.from) || !idSet.has(c.to)) continue;
+    fwdAdj.get(c.from)!.push(c.to);
+    revAdj.get(c.to)!.push(c.from);
+  }
+  const cycleEdges = new Set<string>();
+  for (const c of connections) {
+    if (!backEdges.has(c.id)) continue;
+    const fwdReach = new Set<string>();
+    const fq: string[] = [c.to];
+    while (fq.length) { const n = fq.pop()!; if (fwdReach.has(n)) continue; fwdReach.add(n); for (const nb of fwdAdj.get(n) ?? []) fq.push(nb); }
+    const revReach = new Set<string>();
+    const rq: string[] = [c.from];
+    while (rq.length) { const n = rq.pop()!; if (revReach.has(n)) continue; revReach.add(n); for (const nb of revAdj.get(n) ?? []) rq.push(nb); }
+    const onCycle = new Set<string>([...fwdReach].filter((n) => revReach.has(n)));
+    for (const edge of connections) {
+      if (!backEdges.has(edge.id) && onCycle.has(edge.from) && onCycle.has(edge.to)) cycleEdges.add(edge.id);
+    }
+  }
+  return cycleEdges;
+}
+
 type CrossPickerState = {
   taskId: string;
   direction: "in" | "out";
@@ -573,7 +639,15 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
     };
   }, [tasks]);
 
-  const criticalPath = useMemo(() => computeCriticalPath(tasks, connections), [tasks, connections]);
+  const backEdgeIds = useMemo(() => findBackEdges(tasks, connections), [tasks, connections]);
+  const cycleEdgeIds = useMemo(() => findCycleEdgeIds(tasks, connections, backEdgeIds), [tasks, connections, backEdgeIds]);
+
+  const forwardConnections = useMemo(
+    () => connections.filter((c) => !backEdgeIds.has(c.id)),
+    [connections, backEdgeIds]
+  );
+
+  const criticalPath = useMemo(() => computeCriticalPath(tasks, forwardConnections), [tasks, forwardConnections]);
 
   const totalPrice = useMemo(
     () => tasks.reduce((sum, t) => sum + effectiveHours(t), 0) * HOURLY_RATE,
@@ -793,22 +867,37 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 <marker id="arrowhead-critical" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
                   <polygon points="0 0, 8 3, 0 6" fill="#f97316" />
                 </marker>
+                <marker id="arrowhead-loop" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                  <polygon points="0 0, 8 3, 0 6" fill="#8b5cf6" />
+                </marker>
               </defs>
               {connectionLines.map((line) => {
                 const isCritical = criticalPath.criticalConnectionIds.has(line.id);
+                const isLoop = backEdgeIds.has(line.id) || cycleEdgeIds.has(line.id);
                 return (
-                  <line
-                    key={line.id}
-                    x1={line.x1}
-                    y1={line.y1}
-                    x2={line.x2}
-                    y2={line.y2}
-                    stroke={isCritical ? "#f97316" : "#a1a1aa"}
-                    strokeWidth={isCritical ? 2.5 : 2}
-                    strokeLinecap="round"
-                    markerEnd={isCritical ? "url(#arrowhead-critical)" : "url(#arrowhead)"}
-                    className="mix-blend-multiply"
-                  />
+                  <g key={line.id}>
+                    <line
+                      x1={line.x1}
+                      y1={line.y1}
+                      x2={line.x2}
+                      y2={line.y2}
+                      stroke={isLoop ? "#8b5cf6" : isCritical ? "#f97316" : "#a1a1aa"}
+                      strokeWidth={isCritical ? 2.5 : 2}
+                      strokeDasharray={isLoop ? "5 3" : undefined}
+                      strokeLinecap="round"
+                      markerEnd={isLoop ? "url(#arrowhead-loop)" : isCritical ? "url(#arrowhead-critical)" : "url(#arrowhead)"}
+                      className="mix-blend-multiply"
+                    />
+                    {isLoop && (() => {
+                      const mx = (line.x1 + line.x2) / 2;
+                      const my = (line.y1 + line.y2) / 2;
+                      return (
+                        <text x={mx} y={my - 5} textAnchor="middle" fontSize={10} fontWeight="700" fill="#8b5cf6" className="select-none pointer-events-none">
+                          ↺
+                        </text>
+                      );
+                    })()}
+                  </g>
                 );
               })}
             </svg>
@@ -1168,6 +1257,35 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                           {connection.lagUnit === "d" ? "d" : "h"}
                         </button>
                       </span>
+                      {/* Loop-Dauer — nur für Back-Edges sichtbar */}
+                      {backEdgeIds.has(connection.id) && (
+                        <span className="flex shrink-0 items-center gap-1" title="Gesamtzeit für diesen Loop">
+                          <span className="text-[10px] font-bold text-violet-500">↺</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={9999}
+                            value={connection.loopDuration ?? 0}
+                            onChange={(e) => {
+                              const val = Math.max(0, parseInt(e.target.value) || 0);
+                              setConnections((prev) =>
+                                prev.map((c) => c.id === connection.id ? { ...c, loopDuration: val || undefined } : c)
+                              );
+                            }}
+                            className="w-12 rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-center text-xs font-semibold text-violet-700 focus:border-violet-400 focus:outline-none"
+                            aria-label="Loop-Gesamtdauer"
+                            placeholder="0"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setConnections((prev) => prev.map((c) => c.id === connection.id ? { ...c, loopDurationUnit: c.loopDurationUnit === "d" ? "h" : "d" } : c))}
+                            className="rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-600 hover:border-violet-400"
+                            title="Loop-Einheit wechseln"
+                          >
+                            {connection.loopDurationUnit === "d" ? "d" : "h"}
+                          </button>
+                        </span>
+                      )}
                       <button
                         type="button"
                         onClick={() =>
@@ -1340,20 +1458,74 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         const PAD = 12;
 
         // Normalize all durations to hours; ES/EF are already in hours after CPM update
+        // Back edges (loops) are excluded from CPM — use forwardConnections
         const efMap = new Map<string, number>();
         const esMap = new Map<string, number>();
-        if (connections.length > 0 && !criticalPath.hasCycle && criticalPath.ES.size > 0) {
+        if (forwardConnections.length > 0 && !criticalPath.hasCycle && criticalPath.ES.size > 0) {
           for (const t of tasks) {
             esMap.set(t.id, criticalPath.ES.get(t.id) ?? 0);
             efMap.set(t.id, criticalPath.EF.get(t.id) ?? (criticalPath.ES.get(t.id) ?? 0) + effectiveHours(t));
           }
         } else {
+          // Fallback: place tasks in topo order or original order
+          const fallbackOrder = criticalPath.topoOrder.length > 0
+            ? criticalPath.topoOrder
+            : tasks.map((t) => t.id);
           let cursor = 0;
-          for (const t of tasks) {
+          for (const id of fallbackOrder) {
+            const t = tasks.find((x) => x.id === id);
+            if (!t) continue;
             const dur = effectiveHours(t);
-            esMap.set(t.id, cursor);
-            efMap.set(t.id, cursor + dur);
+            esMap.set(id, cursor);
+            efMap.set(id, cursor + dur);
             cursor += dur;
+          }
+          // any tasks not in fallbackOrder
+          for (const t of tasks) {
+            if (!esMap.has(t.id)) {
+              const dur = effectiveHours(t);
+              esMap.set(t.id, cursor);
+              efMap.set(t.id, cursor + dur);
+              cursor += dur;
+            }
+          }
+        }
+
+        // Apply loop duration: for back edges with loopDuration,
+        // any task that topologically comes AFTER the loop entry (but is not IN the loop)
+        // must start at >= loopEntry.ES + loopDuration.
+        for (const c of connections) {
+          if (!backEdgeIds.has(c.id) || !c.loopDuration) continue;
+          const loopH = toHours(c.loopDuration, c.loopDurationUnit ?? "h");
+          const entryId = c.to;  // back-edge target = loop entry
+          const entryES = esMap.get(entryId) ?? 0;
+          const loopDeadline = entryES + loopH;
+          // Forward adjacency (without back edges)
+          const fwdAdj = new Map<string, string[]>();
+          for (const t of tasks) fwdAdj.set(t.id, []);
+          for (const fc of forwardConnections) fwdAdj.get(fc.from)?.push(fc.to);
+          // Find loop nodes = all nodes reachable from entryId that can reach c.from
+          const reachFromEntry = new Set<string>();
+          const stk = [entryId];
+          while (stk.length) { const n = stk.pop()!; if (reachFromEntry.has(n)) continue; reachFromEntry.add(n); for (const nb of fwdAdj.get(n) ?? []) stk.push(nb); }
+          const loopNodes = new Set<string>();
+          function canReachExit(node: string, visited: Set<string>): boolean {
+            if (node === c.from) return true;
+            if (visited.has(node)) return false;
+            visited.add(node);
+            return (fwdAdj.get(node) ?? []).some((nb) => canReachExit(nb, visited));
+          }
+          for (const n of reachFromEntry) {
+            if (canReachExit(n, new Set())) loopNodes.add(n);
+          }
+          // Shift post-loop tasks
+          for (const t of tasks) {
+            if (loopNodes.has(t.id)) continue;
+            const curES = esMap.get(t.id) ?? 0;
+            if (curES >= entryES && curES < loopDeadline) {
+              esMap.set(t.id, loopDeadline);
+              efMap.set(t.id, loopDeadline + effectiveHours(t));
+            }
           }
         }
 
@@ -1509,14 +1681,49 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 <marker id="gantt-arrow-crit" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
                   <polygon points="0 0, 6 2.5, 0 5" fill="#f97316" />
                 </marker>
+                <marker id="gantt-arrow-loop" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0, 6 2.5, 0 5" fill="#8b5cf6" />
+                </marker>
               </defs>
 
-              {/* Dependency arrows (current board level only) */}
-              {connections.map((c) => {
+              {/* Back-edge loop arrows — routed from source bar end → right gutter → target bar end */}
+              {connections.filter((c) => backEdgeIds.has(c.id)).map((c) => {
+                const fi = rowIndex.get(c.from);
+                const ti = rowIndex.get(c.to);
+                if (fi === undefined || ti === undefined) return null;
+                const fromRow = ganttRows[fi];
+                const toRow   = ganttRows[ti];
+                const ELBOW   = 14;
+                const srcX    = LABEL_W + fromRow.absoluteEF * HR_W;
+                const dstX    = LABEL_W + (toRow.absoluteES + toRow.absoluteEF) / 2 * HR_W; // center of target bar
+                const srcY    = HEADER_H + fi * ROW_H + ROW_H / 2;
+                const dstY    = HEADER_H + ti * ROW_H + ROW_H - 6; // bottom edge of target bar
+                // Route: right → down below the lowest loop row → left to target bar center → up into bar bottom
+                const bottomY   = HEADER_H + (Math.max(fi, ti) + 1) * ROW_H; // midpoint of gap between rows
+                const arrowPath = `M ${srcX},${srcY} H ${srcX + ELBOW} V ${bottomY} H ${dstX} V ${dstY}`;
+                const loopLabel = c.loopDuration
+                  ? `↺ ${fmtDuration(toHours(c.loopDuration, c.loopDurationUnit ?? "h"))}`
+                  : "↺";
+                const labelX = (srcX + ELBOW + dstX) / 2;
+                return (
+                  <g key={c.id}>
+                    <path d={arrowPath} fill="none" stroke="#8b5cf6" strokeWidth={1.8}
+                      strokeDasharray="5 3" strokeLinejoin="round"
+                      markerEnd="url(#gantt-arrow-loop)" />
+                    <text x={labelX} y={bottomY - 3} textAnchor="middle" fill="#8b5cf6" fontSize={9} fontWeight="700" className="select-none">
+                      {loopLabel}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Dependency arrows — only forward connections; back edges shown as loop markers separately */}
+              {forwardConnections.map((c) => {
                 const fi = rowIndex.get(c.from);
                 const ti = rowIndex.get(c.to);
                 if (fi === undefined || ti === undefined) return null;
                 const isCritical = criticalPath.criticalConnectionIds.has(c.id);
+                const isLoopEdge = cycleEdgeIds.has(c.id);
                 const lagH = lagToHours(c.lag, c.lagUnit);
                 const fromRow = ganttRows[fi];
                 const toRow = ganttRows[ti];
@@ -1527,31 +1734,27 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
                 const dstY = HEADER_H + ti * ROW_H + ROW_H / 2;
 
-                // Standard Gantt routing: exit right a fixed amount, go vertical, then horizontal to bar start
-                // turnX stays close to the source bar — no long horizontal spans
                 const turnX = srcX + ELBOW;
                 const arrowPath = `M ${srcX},${srcY} H ${turnX} V ${dstY} H ${dstX}`;
+
+                const strokeColor = isLoopEdge ? "#8b5cf6" : isCritical ? "#f97316" : "#b0b8c8";
+                const markerUrl = isLoopEdge ? "url(#gantt-arrow-loop)" : `url(#gantt-arrow-${isCritical ? "crit" : "norm"})`;
 
                 return (
                   <g key={c.id}>
                     {lagH > 0 && (
-                      <text
-                        x={srcX + 4}
-                        y={srcY - 4}
-                        fill={isCritical ? "#f97316" : "#94a3b8"}
-                        fontSize={8}
-                        fontWeight="600"
-                      >
+                      <text x={srcX + 4} y={srcY - 4} fill={isCritical ? "#f97316" : "#94a3b8"} fontSize={8} fontWeight="600">
                         +{fmtDuration(lagH)}
                       </text>
                     )}
                     <path
                       d={arrowPath}
                       fill="none"
-                      stroke={isCritical ? "#f97316" : "#b0b8c8"}
+                      stroke={strokeColor}
                       strokeWidth={isCritical ? 2 : 1.2}
+                      strokeDasharray={isLoopEdge ? "5 3" : undefined}
                       strokeLinejoin="round"
-                      markerEnd={`url(#gantt-arrow-${isCritical ? "crit" : "norm"})`}
+                      markerEnd={markerUrl}
                     />
                   </g>
                 );
@@ -1568,7 +1771,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 const iters = Math.max(1, row.iterations ?? 1);
                 const singleBarW = iters > 1 ? Math.max((barW - (iters - 1) * 3) / iters, 2) : barW;
                 const labelX = row.indent > 0 ? 18 : 8;
-                const maxChars = row.indent > 0 ? 22 : 18;
+                const maxChars = row.indent > 0 ? 18 : 22;
                 return (
                   <g key={row.id}>
                     {row.indent > 0 && (
