@@ -1512,43 +1512,55 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 const lagH = lagToHours(c.lag, c.lagUnit);
                 const fromRow = ganttRows[fi];
                 const toRow = ganttRows[ti];
-                const x1 = LABEL_W + fromRow.absoluteEF * HR_W;
-                const y1 = HEADER_H + fi * ROW_H + ROW_H / 2;
-                const xLagEnd = LABEL_W + toRow.absoluteES * HR_W;
-                const y2 = HEADER_H + ti * ROW_H + ROW_H / 2;
-                const mx = (x1 + xLagEnd) / 2;
+
+                // Align to visual bar edges
+                const ELBOW = 8;
+                const srcX = LABEL_W + fromRow.absoluteEF * HR_W - 2;
+                const dstX = LABEL_W + toRow.absoluteES * HR_W + 2;
+                const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
+                const dstY = HEADER_H + ti * ROW_H + ROW_H / 2;
+
+                // Orthogonal routing: right → down → right (detour if target is too close/left)
+                let arrowPath: string;
+                if (dstX >= srcX + ELBOW * 2) {
+                  arrowPath = `M ${srcX},${srcY} H ${srcX + ELBOW} V ${dstY} H ${dstX}`;
+                } else {
+                  const detourY = HEADER_H + (Math.max(fi, ti) + 1) * ROW_H - 2;
+                  arrowPath = `M ${srcX},${srcY} H ${srcX + ELBOW} V ${detourY} H ${dstX - ELBOW} V ${dstY} H ${dstX}`;
+                }
+
                 return (
                   <g key={c.id}>
                     {lagH > 0 && (
-                      <rect
-                        x={x1}
-                        y={HEADER_H + Math.min(fi, ti) * ROW_H}
-                        width={lagH * HR_W}
-                        height={Math.abs(fi - ti) * ROW_H + ROW_H}
-                        fill={isCritical ? "rgba(249,115,22,0.08)" : "rgba(203,213,225,0.2)"}
-                        rx={2}
-                      />
+                      <>
+                        <rect
+                          x={srcX + 2}
+                          y={HEADER_H + fi * ROW_H + ROW_H / 2 - 8}
+                          width={lagH * HR_W - 4}
+                          height={16}
+                          fill={isCritical ? "rgba(249,115,22,0.12)" : "rgba(203,213,225,0.35)"}
+                          rx={3}
+                        />
+                        <text
+                          x={srcX + 2 + (lagH * HR_W - 4) / 2}
+                          y={HEADER_H + fi * ROW_H + ROW_H / 2 + 4}
+                          textAnchor="middle"
+                          fill={isCritical ? "#f97316" : "#94a3b8"}
+                          fontSize={8}
+                          fontWeight="600"
+                        >
+                          +{fmtDuration(lagH)}
+                        </text>
+                      </>
                     )}
                     <path
-                      d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${xLagEnd},${y2}`}
+                      d={arrowPath}
                       fill="none"
-                      stroke={isCritical ? "#f97316" : "#cbd5e1"}
+                      stroke={isCritical ? "#f97316" : "#94a3b8"}
                       strokeWidth={isCritical ? 2 : 1.5}
-                      strokeDasharray={isCritical ? undefined : "4 3"}
+                      strokeLinejoin="round"
                       markerEnd={`url(#gantt-arrow-${isCritical ? "crit" : "norm"})`}
                     />
-                    {lagH > 0 && (
-                      <text
-                        x={x1 + (lagH * HR_W) / 2}
-                        y={HEADER_H + Math.min(fi, ti) * ROW_H + 10}
-                        textAnchor="middle"
-                        fill={isCritical ? "#f97316" : "#94a3b8"}
-                        fontSize={8}
-                        fontWeight="600"
-                      >
-                        +{fmtDuration(lagH)}
-                      </text>
-                    )}
                   </g>
                 );
               })}
