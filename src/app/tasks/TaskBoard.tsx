@@ -11,6 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { generateGanttHTML, type GanttExportData } from "./gantt-export";
 
 type ColorToken = "amber" | "orange" | "emerald" | "teal" | "sky" | "indigo" | "rose" | "violet" | "mint";
 
@@ -2154,6 +2155,48 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           _loopZones.push({ id: c.id, x: entryES * HR_W, w: loopH * HR_W, y: HEADER_H + minRow * ROW_H, h: (maxRow - minRow + 1) * ROW_H, color: GANTT_COLORS[ganttRows[ti].color] ?? "#a1a1aa", label: `↺ ${fmtDuration(loopH)}` });
         }
 
+        // ── Back-edge data for export ──
+        const _backEdgeData: { id: string; path: string; label: string; labelX: number; labelY: number }[] = [];
+        for (const c of connections.filter((c) => backEdgeIds.has(c.id))) {
+          const fi = rowIndex.get(c.from), ti = rowIndex.get(c.to);
+          if (fi === undefined || ti === undefined) continue;
+          const fromRow = ganttRows[fi], toRow = ganttRows[ti];
+          const ELBOW = 14;
+          const srcX = fromRow.absoluteEF * HR_W;
+          const dstX = (toRow.absoluteES + toRow.absoluteEF) / 2 * HR_W;
+          const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
+          const bottomY = HEADER_H + (Math.max(fi, ti) + 1) * ROW_H;
+          const arrowPath = `M ${srcX},${srcY} H ${srcX + ELBOW} V ${bottomY} H ${dstX} V ${HEADER_H + ti * ROW_H + ROW_H - 6}`;
+          const loopLabel = c.loopDuration ? `↺ ${fmtDuration(toHours(c.loopDuration, c.loopDurationUnit ?? "h"))}` : "↺";
+          _backEdgeData.push({ id: c.id, path: arrowPath, label: loopLabel, labelX: (srcX + ELBOW + dstX) / 2, labelY: bottomY - 3 });
+        }
+
+        // ── Export function ──
+        const _exportGantt = () => {
+          const exportRows = ganttRows.map(r => {
+            const phaseId = r.indent > 0 && r.id.includes(':') ? r.id.split(':')[0] : undefined;
+            return { ...r, phaseId };
+          });
+          const data: GanttExportData = {
+            rows: exportRows,
+            fwdRoutes: _fwdRoutes.map(r => ({ id: r.id, from: r.from, to: r.to, path: r.path, color: r.color, w: r.w, dash: r.dash, lagLabel: r.lagLabel })),
+            subRoutes: _subRoutes.map(r => ({ id: r.id, from: r.from, to: r.to, path: r.path, color: r.color, w: r.w, dash: r.dash, lagLabel: r.lagLabel })),
+            loopRoutes: _loopRoutes,
+            backEdges: _backEdgeData,
+            loopZones: _loopZones,
+            maxHours,
+            title: initialState?.planName ?? 'Gantt',
+          };
+          const html = generateGanttHTML(data);
+          const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `gantt-${new Date().toISOString().slice(0, 10)}.html`;
+          a.click();
+          URL.revokeObjectURL(url);
+        };
+
         // ── Selection highlight sets ──
         const _selId = ganttSelectedRowId;
         const _selArrowIds = new Set<string>();
@@ -2820,6 +2863,13 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                     title="Resource Leveling: Solo-Modus (nur 1 Person arbeitet)"
                   >
                     👤 Solo-Modus
+                  </button>
+                  <button type="button"
+                    onClick={_exportGantt}
+                    className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-100"
+                    title="Gantt als interaktives HTML exportieren"
+                  >
+                    📄 HTML Export
                   </button>
                 </div>
                 <button type="button" onClick={() => setGanttFullscreen(false)}
