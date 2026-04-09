@@ -1773,7 +1773,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         // Re-propagate: after loop shifts some tasks may violate predecessor constraints.
         // Walk forward edges in topo order and enforce ES >= max(pred EF + lag).
         if (!_flatCPM.hasCycle && _flatCPM.topoOrder.length > 0) {
-          const _fwdConnLookup = new Map<string, { lag?: number; lagUnit?: string }>();
+          const _fwdConnLookup = new Map<string, { lag?: number; lagUnit?: "h" | "d" }>();
           for (const fc of _flatFwd) _fwdConnLookup.set(`${fc.from}:${fc.to}`, fc);
           const _fwdPreds = new Map<string, string[]>();
           for (const t of _flatTasks) _fwdPreds.set(t.id, []);
@@ -1805,7 +1805,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           // Build predecessor and successor lookup
           const _lvPreds = new Map<string, Set<string>>();
           const _lvSuccs = new Map<string, string[]>();
-          const _lvConnLookup = new Map<string, { lag?: number; lagUnit?: string }>();
+          const _lvConnLookup = new Map<string, { lag?: number; lagUnit?: "h" | "d" }>();
           for (const t of _flatTasks) { _lvPreds.set(t.id, new Set()); _lvSuccs.set(t.id, []); }
           const _flatIds = new Set(_flatTasks.map((t) => t.id));
           for (const fc of _flatFwd) {
@@ -1920,7 +1920,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         const svgH = HEADER_H + ganttRows.length * ROW_H + PAD;
 
         // Collect visible sub-board connections + cross-phase connections (remapped to composite IDs)
-        type GanttConn = { id: string; from: string; to: string; lag?: number; lagUnit?: string; loopDuration?: number; loopDurationUnit?: string; isSubConn?: boolean; };
+        type GanttConn = { id: string; from: string; to: string; lag?: number; lagUnit?: "h" | "d"; loopDuration?: number; loopDurationUnit?: string; isSubConn?: boolean; };
         const ganttSubConns: GanttConn[] = [];
         for (const task of sortedGanttTasks) {
           if ((task.subBoard?.tasks?.length ?? 0) > 0 && expandedPhaseIds.has(task.id)) {
