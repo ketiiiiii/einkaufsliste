@@ -11,7 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { generateGanttHTML, type GanttExportData } from "./gantt-export";
+import { generateGanttHTML, type GanttExportData, type ExportConnection } from "./gantt-export";
 
 type ColorToken = "amber" | "orange" | "emerald" | "teal" | "sky" | "indigo" | "rose" | "violet" | "mint";
 
@@ -2173,18 +2173,101 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
 
         // ── Export function ──
         const _exportGantt = () => {
-          const exportRows = ganttRows.map(r => {
-            const phaseId = r.indent > 0 && r.id.includes(':') ? r.id.split(':')[0] : undefined;
-            return { ...r, phaseId };
-          });
+          // Build ALL rows (force all phases expanded, independent of expandedPhaseIds)
+          const exportRows: GanttExportData['rows'] = [];
+          for (const task of sortedGanttTasks) {
+            const taskES = phaseAbsES.get(task.id) ?? 0;
+            const taskEF = phaseAbsEF.get(task.id) ?? taskES + effectiveHours(task);
+            const hasSubTasks = (task.subBoard?.tasks?.length ?? 0) > 0;
+            exportRows.push({
+              id: task.id, title: task.title, note: task.note, color: task.color,
+              duration: task.duration ?? 1, unit: task.unit, iterations: task.iterations,
+              indent: 0, absoluteES: taskES, absoluteEF: taskEF,
+              isCritical: criticalPath.criticalTaskIds.has(task.id), hasSubTasks,
+              assignee: task.assignee,
+            });
+            if (hasSubTasks) {
+              const sortedSubs = [...task.subBoard!.tasks].sort((a, b) =>
+                (globalSubES.get(`${task.id}:${a.id}`) ?? 0) - (globalSubES.get(`${task.id}:${b.id}`) ?? 0)
+              );
+              for (const st of sortedSubs) {
+                const cid = `${task.id}:${st.id}`;
+                exportRows.push({
+                  id: cid, title: st.title, note: st.note, color: st.color,
+                  duration: st.duration ?? 1, unit: st.unit, iterations: st.iterations,
+                  indent: 1, absoluteES: globalSubES.get(cid) ?? 0,
+                  absoluteEF: globalSubEF.get(cid) ?? effectiveHours(st),
+                  isCritical: _flatCPM.criticalTaskIds.has(cid), hasSubTasks: false,
+                  assignee: st.assignee, phaseId: task.id,
+                });
+              }
+            }
+          }
+          const exportMaxH = Math.max(...exportRows.map(r => r.absoluteEF), 1);
+
+          // Build raw connection data for the JS to route arrows
+          const exportConns: ExportConnection[] = [];
+
+          // Phase-level forward connections
+          for (const c of forwardConnections) {
+            if (c.from.includes(':') || c.to.includes(':')) continue; // skip sub-level in phase list
+            exportConns.push({
+              id: c.id, from: c.from, to: c.to,
+              lag: c.lag, lagUnit: c.lagUnit,
+              level: 'phase', isBackEdge: false,
+            });
+          }
+
+          // Phase-level back edges
+          for (const c of connections.filter(c2 => backEdgeIds.has(c2.id))) {
+            exportConns.push({
+              id: c.id, from: c.from, to: c.to,
+              loopDuration: c.loopDuration,
+              loopDurationUnit: c.loopDurationUnit ?? 'h',
+              level: 'phase', isBackEdge: true,
+            });
+          }
+
+          // Sub-board connections
+          for (const task of sortedGanttTasks) {
+            if ((task.subBoard?.tasks?.length ?? 0) > 0) {
+              for (const c of (task.subBoard!.connections ?? [])) {
+                exportConns.push({
+                  id: `${task.id}:${c.id}`,
+                  from: `${task.id}:${c.from}`, to: `${task.id}:${c.to}`,
+                  lag: c.lag, lagUnit: c.lagUnit,
+                  loopDuration: c.loopDuration,
+                  loopDurationUnit: c.loopDurationUnit ?? 'h',
+                  level: 'sub', isBackEdge: false,
+                });
+              }
+            }
+          }
+
+          // Cross-phase connections
+          for (const c of connections) {
+            if (!c.from.includes(':') || !c.to.includes(':')) continue;
+            exportConns.push({
+              id: c.id, from: c.from, to: c.to,
+              lag: c.lag, lagUnit: c.lagUnit,
+              level: 'sub', isBackEdge: false,
+            });
+          }
+          for (const cc of (crossConnections ?? [])) {
+            const fromId = `${cc.fromPhaseId}:${cc.fromTaskId}`;
+            const toId = `${cc.toPhaseId}:${cc.toTaskId}`;
+            if (!exportConns.some(ec => ec.from === fromId && ec.to === toId)) {
+              exportConns.push({
+                id: cc.id, from: fromId, to: toId,
+                level: 'sub', isBackEdge: false,
+              });
+            }
+          }
+
           const data: GanttExportData = {
             rows: exportRows,
-            fwdRoutes: _fwdRoutes.map(r => ({ id: r.id, from: r.from, to: r.to, path: r.path, color: r.color, w: r.w, dash: r.dash, lagLabel: r.lagLabel })),
-            subRoutes: _subRoutes.map(r => ({ id: r.id, from: r.from, to: r.to, path: r.path, color: r.color, w: r.w, dash: r.dash, lagLabel: r.lagLabel })),
-            loopRoutes: _loopRoutes,
-            backEdges: _backEdgeData,
-            loopZones: _loopZones,
-            maxHours,
+            connections: exportConns,
+            maxHours: exportMaxH,
             title: initialState?.planName ?? 'Gantt',
           };
           const html = generateGanttHTML(data);
