@@ -459,7 +459,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
   const [draftNote, setDraftNote] = useState("");
   const [draftColor, setDraftColor] = useState<ColorToken>(paletteOrder[0]);
   const [linkSource, setLinkSource] = useState<string | null>(null);
-  const [view, setView] = useState<"board" | "table" | "gantt">(initialView === "gantt-fullscreen" ? "gantt" : (initialView ?? "board"));
+  const [view, setView] = useState<"board" | "table" | "gantt" | "liste">(initialView === "gantt-fullscreen" ? "gantt" : (initialView ?? "board"));
   const [ganttFullscreen, setGanttFullscreen] = useState(initialView === "gantt-fullscreen");
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [draftTodo, setDraftTodo] = useState("");
@@ -814,6 +814,15 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             }`}
           >
             Gantt
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("liste")}
+            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+              view === "liste" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+            }`}
+          >
+            Liste
           </button>
         </div>
         {view === "board" && (
@@ -1566,6 +1575,225 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         </div>
       )}
 
+      {/* Liste view — simple colored table with Tag/Task/Notiz/Dauer */}
+      {view === "liste" && (() => {
+        // We need ganttRows-like data: sorted by ES, with subtasks expanded
+        // Reuse the same CPM/leveling data from gantt by building a lightweight version
+        const GANTT_COLORS_L: Record<string, string> = {
+          amber: "#fbbf24", sky: "#38bdf8", rose: "#fb7185",
+          emerald: "#34d399", violet: "#a78bfa", zinc: "#a1a1aa",
+          orange: "#fb923c", teal: "#2dd4bf", indigo: "#818cf8",
+          mint: "#86efac",
+        };
+
+        // Build flat list: phases sorted by ES, subtasks sorted by ES within phase
+        // We need ES/EF for day computation → use criticalPath for phase-level
+        const phES = new Map<string, number>();
+        const phEF = new Map<string, number>();
+        if (!criticalPath.hasCycle && criticalPath.ES.size > 0) {
+          for (const t of tasks) {
+            phES.set(t.id, criticalPath.ES.get(t.id) ?? 0);
+            phEF.set(t.id, criticalPath.EF.get(t.id) ?? 0);
+          }
+        }
+        // Sub-task ES/EF: quick flat CPM (mirrors gantt logic)
+        const _lFlatTasks: TaskCard[] = [];
+        const _lFlatConns: TaskConnection[] = [];
+        for (const ph of tasks) {
+          if (!ph.subBoard?.tasks?.length) continue;
+          for (const st of ph.subBoard.tasks) _lFlatTasks.push({ ...st, id: `${ph.id}:${st.id}` });
+          for (const c of (ph.subBoard.connections ?? []))
+            _lFlatConns.push({ ...c, id: `_s_${ph.id}:${c.id}`, from: `${ph.id}:${c.from}`, to: `${ph.id}:${c.to}` });
+        }
+        // Cross-phase connections
+        for (const c of connections) {
+          if (!c.from.includes(':') || !c.to.includes(':')) continue;
+          if (!_lFlatConns.some(fc => fc.from === c.from && fc.to === c.to))
+            _lFlatConns.push(c);
+        }
+        for (const cc of (crossConnections ?? [])) {
+          const fid = `${cc.fromPhaseId}:${cc.fromTaskId}`;
+          const tid = `${cc.toPhaseId}:${cc.toTaskId}`;
+          if (!_lFlatConns.some(fc => fc.from === fid && fc.to === tid))
+            _lFlatConns.push({ id: cc.id, from: fid, to: tid });
+        }
+        // Phase→subtask virtual edges
+        for (const c of connections) {
+          if (c.from.includes(':') || c.to.includes(':')) continue;
+          const phFrom = tasks.find(t => t.id === c.from);
+          const phTo = tasks.find(t => t.id === c.to);
+          if (!phFrom?.subBoard?.tasks?.length || !phTo?.subBoard?.tasks?.length) continue;
+          const intFromConns = (phFrom.subBoard.connections ?? []).filter(ic => phFrom.subBoard!.tasks.some(t => t.id === ic.from) && phFrom.subBoard!.tasks.some(t => t.id === ic.to));
+          const intFromBackIds = findBackEdges(phFrom.subBoard.tasks, intFromConns);
+          const hasOut = new Set(intFromConns.filter(ic => !intFromBackIds.has(ic.id)).map(ic => ic.from));
+          const exits = phFrom.subBoard.tasks.filter(t => !hasOut.has(t.id));
+          const intToConns = (phTo.subBoard.connections ?? []).filter(ic => phTo.subBoard!.tasks.some(t => t.id === ic.from) && phTo.subBoard!.tasks.some(t => t.id === ic.to));
+          const intToBackIds = findBackEdges(phTo.subBoard.tasks, intToConns);
+          const hasIn = new Set(intToConns.filter(ic => !intToBackIds.has(ic.id)).map(ic => ic.to));
+          const entries = phTo.subBoard.tasks.filter(t => !hasIn.has(t.id));
+          for (const ex of exits) for (const en of entries) {
+            const vf = `${c.from}:${ex.id}`, vt = `${c.to}:${en.id}`;
+            if (!_lFlatConns.some(fc => fc.from === vf && fc.to === vt))
+              _lFlatConns.push({ id: `_vp_${vf}_${vt}`, from: vf, to: vt, lag: c.lag, lagUnit: c.lagUnit });
+          }
+        }
+        const _lFlatBackIds = findBackEdges(_lFlatTasks, _lFlatConns);
+        const _lFlatFwd = _lFlatConns.filter(c => !_lFlatBackIds.has(c.id));
+        const _lCPM = computeCriticalPath(_lFlatTasks, _lFlatFwd);
+        const subES = new Map<string, number>();
+        const subEF = new Map<string, number>();
+        if (!_lCPM.hasCycle && _lCPM.ES.size > 0) {
+          for (const t of _lFlatTasks) { subES.set(t.id, _lCPM.ES.get(t.id) ?? 0); subEF.set(t.id, _lCPM.EF.get(t.id) ?? 0); }
+        }
+        // Solo-mode leveling
+        if (soloMode && _lFlatTasks.length > 0) {
+          const _lvPreds2 = new Map<string, Set<string>>();
+          const _lvSuccs2 = new Map<string, string[]>();
+          const _lvCL2 = new Map<string, { lag?: number; lagUnit?: "h" | "d" }>();
+          for (const t of _lFlatTasks) { _lvPreds2.set(t.id, new Set()); _lvSuccs2.set(t.id, []); }
+          const _fIds2 = new Set(_lFlatTasks.map(t => t.id));
+          for (const fc of _lFlatFwd) {
+            if (_fIds2.has(fc.from) && _fIds2.has(fc.to)) {
+              _lvPreds2.get(fc.to)!.add(fc.from);
+              _lvSuccs2.get(fc.from)!.push(fc.to);
+              _lvCL2.set(`${fc.from}:${fc.to}`, fc);
+            }
+          }
+          const _oES2 = new Map<string, number>();
+          for (const t of _lFlatTasks) _oES2.set(t.id, subES.get(t.id) ?? 0);
+          const rq2: string[] = [];
+          const done2 = new Set<string>();
+          const rp2 = new Map<string, number>();
+          for (const t of _lFlatTasks) rp2.set(t.id, _lvPreds2.get(t.id)!.size);
+          for (const t of _lFlatTasks) { if (rp2.get(t.id) === 0) rq2.push(t.id); }
+          rq2.sort((a, b) => (_oES2.get(a) ?? 0) - (_oES2.get(b) ?? 0));
+          let rfa2 = 0;
+          let lph2 = "";
+          const po2 = (cid: string) => cid.includes(':') ? cid.split(':')[0] : cid;
+          const _cp2 = new Set<string>();
+          for (const c of connections) {
+            if (!c.from.includes(':') && !c.to.includes(':') && !backEdgeIds.has(c.id)) {
+              _cp2.add(c.from); _cp2.add(c.to);
+            }
+          }
+          const AT2 = 2;
+          while (rq2.length > 0) {
+            const cands: { idx: number; effES: number; phase: string }[] = [];
+            for (let qi = 0; qi < rq2.length; qi++) {
+              const cid = rq2[qi];
+              let effES = Math.max(_oES2.get(cid) ?? 0, rfa2);
+              for (const p of _lvPreds2.get(cid) ?? []) {
+                const cn = _lvCL2.get(`${p}:${cid}`);
+                effES = Math.max(effES, (subEF.get(p) ?? 0) + lagToHours(cn?.lag, cn?.lagUnit));
+              }
+              cands.push({ idx: qi, effES, phase: po2(cid) });
+            }
+            cands.sort((a, b) => {
+              const aA = a.phase === lph2, bA = b.phase === lph2;
+              const aD = a.effES - rfa2, bD = b.effES - rfa2;
+              if (aA && !bA && aD <= AT2) return -1;
+              if (bA && !aA && bD <= AT2) return 1;
+              if (aD <= AT2 && bD <= AT2) {
+                const aC2 = _cp2.has(a.phase) ? 0 : 1, bC2 = _cp2.has(b.phase) ? 0 : 1;
+                if (aC2 !== bC2) return aC2 - bC2;
+              }
+              if (a.effES !== b.effES) return a.effES - b.effES;
+              return (aA ? 0 : 1) - (bA ? 0 : 1);
+            });
+            const best = cands[0];
+            const id = rq2.splice(best.idx, 1)[0];
+            done2.add(id);
+            lph2 = po2(id);
+            const t = _lFlatTasks.find(t2 => t2.id === id);
+            if (!t) continue;
+            const dur = effectiveHours(t);
+            subES.set(id, best.effES);
+            subEF.set(id, best.effES + dur);
+            rfa2 = best.effES + dur;
+            for (const s of _lvSuccs2.get(id) ?? []) {
+              rp2.set(s, (rp2.get(s) ?? 1) - 1);
+              if (rp2.get(s) === 0 && !done2.has(s)) rq2.push(s);
+            }
+          }
+        }
+        // Derive phase ES/EF from sub-tasks
+        for (const ph of tasks) {
+          if (ph.subBoard?.tasks?.length) {
+            let minE = Infinity, maxE = 0;
+            for (const st of ph.subBoard.tasks) {
+              const cid = `${ph.id}:${st.id}`;
+              minE = Math.min(minE, subES.get(cid) ?? 0);
+              maxE = Math.max(maxE, subEF.get(cid) ?? 0);
+            }
+            phES.set(ph.id, minE === Infinity ? 0 : minE);
+            phEF.set(ph.id, maxE);
+          }
+        }
+
+        // Build list rows sorted by ES
+        type ListRow = { id: string; title: string; note?: string; color: string; hex: string; duration: string; es: number; ef: number; indent: number; phaseId?: string };
+        const listRows: ListRow[] = [];
+        const sortedPh = [...tasks].sort((a, b) => (phES.get(a.id) ?? 0) - (phES.get(b.id) ?? 0));
+        for (const ph of sortedPh) {
+          const es = phES.get(ph.id) ?? 0;
+          const ef = phEF.get(ph.id) ?? es + effectiveHours(ph);
+          const hex = GANTT_COLORS_L[ph.color] ?? "#a1a1aa";
+          listRows.push({ id: ph.id, title: ph.title, note: ph.note, color: ph.color, hex, duration: fmtDuration(ef - es), es, ef, indent: 0 });
+          if (ph.subBoard?.tasks?.length) {
+            const sortedSubs = [...ph.subBoard.tasks].sort((a, b) =>
+              (subES.get(`${ph.id}:${a.id}`) ?? 0) - (subES.get(`${ph.id}:${b.id}`) ?? 0)
+            );
+            for (const st of sortedSubs) {
+              const cid = `${ph.id}:${st.id}`;
+              const sES = subES.get(cid) ?? 0;
+              const sEF = subEF.get(cid) ?? sES + effectiveHours(st);
+              listRows.push({ id: cid, title: st.title, note: st.note, color: st.color, hex: GANTT_COLORS_L[st.color] ?? hex, duration: fmtDuration(effectiveHours(st)), es: sES, ef: sEF, indent: 1, phaseId: ph.id });
+            }
+          }
+        }
+
+        // Compute day from ES (8h = 1 day)
+        const dayOf = (h: number) => Math.floor(h / HOURS_PER_DAY) + 1;
+
+        return (
+          <div className="overflow-auto rounded-xl border border-zinc-200 bg-white">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-zinc-200 bg-zinc-50 text-zinc-500">
+                  <th className="px-3 py-2 font-semibold w-16">Tag</th>
+                  <th className="px-3 py-2 font-semibold">Task</th>
+                  <th className="px-3 py-2 font-semibold">Notiz</th>
+                  <th className="px-3 py-2 font-semibold w-16 text-right">Dauer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {listRows.map((row) => {
+                  const isPhase = row.indent === 0;
+                  const bgAlpha = isPhase ? 0.15 : 0.07;
+                  const bg = `${row.hex}${Math.round(bgAlpha * 255).toString(16).padStart(2, '0')}`;
+                  const borderL = `3px solid ${row.hex}`;
+                  return (
+                    <tr
+                      key={row.id}
+                      style={{ backgroundColor: bg, borderLeft: borderL }}
+                      className={`border-b border-zinc-100 ${isPhase ? "font-semibold" : ""}`}
+                    >
+                      <td className="px-3 py-1.5 text-zinc-500 tabular-nums">{dayOf(row.es)}</td>
+                      <td className={`px-3 py-1.5 ${isPhase ? "text-zinc-800" : "text-zinc-600 pl-6"}`}>
+                        {isPhase && <span style={{ color: row.hex }}>● </span>}
+                        {row.title}
+                      </td>
+                      <td className="px-3 py-1.5 text-zinc-400 max-w-xs truncate">{row.note ?? ""}</td>
+                      <td className="px-3 py-1.5 text-right text-zinc-500 tabular-nums">{row.duration}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
       {/* Gantt view — renders inline or inside fullscreen overlay */}
       {(view === "gantt" || ganttFullscreen) && (() => {
         if (tasks.length === 0) {
@@ -1832,6 +2060,16 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           let resourceFreeAt = 0;
           let lastPhase = ""; // Track last scheduled phase for affinity
           const phaseOf = (cid: string) => cid.includes(':') ? cid.split(':')[0] : cid;
+          // Phases with phase-level forward connections are "connected" (main chain);
+          // floating phases (like a parallel writing phase) are deprioritized.
+          const _connectedPhases = new Set<string>();
+          for (const c of connections) {
+            if (!c.from.includes(':') && !c.to.includes(':') && !backEdgeIds.has(c.id)) {
+              _connectedPhases.add(c.from);
+              _connectedPhases.add(c.to);
+            }
+          }
+          const AFFINITY_TOL = 2; // hours – tolerate small gaps to keep phases grouped
           while (readyQueue.length > 0) {
             // Compute effective ES for each candidate
             const candidates: { idx: number; effES: number; phase: string }[] = [];
@@ -1845,13 +2083,25 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               }
               candidates.push({ idx: qi, effES, phase: phaseOf(cid) });
             }
-            // Sort: earliest effES first, then phase affinity (same phase as last → priority)
+            // Sort: strong phase affinity → connected-phase priority → earliest effES
             candidates.sort((a, b) => {
+              const aAff = a.phase === lastPhase;
+              const bAff = b.phase === lastPhase;
+              const aDelay = a.effES - resourceFreeAt;
+              const bDelay = b.effES - resourceFreeAt;
+              // 1) Strong affinity: same phase with small delay gets absolute priority
+              if (aAff && !bAff && aDelay <= AFFINITY_TOL) return -1;
+              if (bAff && !aAff && bDelay <= AFFINITY_TOL) return 1;
+              // 2) Both within tolerance: prefer connected (main-chain) phases
+              if (aDelay <= AFFINITY_TOL && bDelay <= AFFINITY_TOL) {
+                const aC = _connectedPhases.has(a.phase) ? 0 : 1;
+                const bC = _connectedPhases.has(b.phase) ? 0 : 1;
+                if (aC !== bC) return aC - bC;
+              }
+              // 3) Earliest effES
               if (a.effES !== b.effES) return a.effES - b.effES;
-              // Tiebreaker: prefer same phase as last scheduled task
-              const aAff = a.phase === lastPhase ? 0 : 1;
-              const bAff = b.phase === lastPhase ? 0 : 1;
-              return aAff - bAff;
+              // 4) Tiebreaker: phase affinity
+              return (aAff ? 0 : 1) - (bAff ? 0 : 1);
             });
             const best = candidates[0];
             const id = readyQueue.splice(best.idx, 1)[0];
@@ -1919,6 +2169,16 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         const maxHours = Math.max(...ganttRows.map((r) => r.absoluteEF), 1);
         const svgW = LABEL_W + maxHours * HR_W + PAD * 2;
         const svgH = HEADER_H + ganttRows.length * ROW_H + PAD;
+
+        // Precompute zebra backgrounds: restart counter at each phase
+        const _rowBg: string[] = [];
+        {
+          let stripe = 0;
+          for (let i = 0; i < ganttRows.length; i++) {
+            if (ganttRows[i].indent === 0) stripe = 0; else stripe++;
+            _rowBg.push(stripe % 2 === 0 ? '#f4f4f5' : '#ffffff');
+          }
+        }
 
         // Collect visible sub-board connections + cross-phase connections (remapped to composite IDs)
         type GanttConn = { id: string; from: string; to: string; lag?: number; lagUnit?: "h" | "d"; loopDuration?: number; loopDurationUnit?: string; isSubConn?: boolean; };
@@ -2347,7 +2607,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                   const isPhase = r.indent === 0;
                   const isSelRow = _hasSel && _selRelatedRowIds.has(r.id);
                   const isSelPrimary = _selId === r.id;
-                  const bg = isSelPrimary ? '#dbeafe' : isSelRow ? '#eff6ff' : isPhase ? (i % 2 === 0 ? '#f4f4f6' : '#ebebed') : (i % 2 === 0 ? '#fafafa' : '#f3f3f5');
+                  const bg = isSelPrimary ? '#dbeafe' : isSelRow ? '#eff6ff' : _rowBg[i];
                   return (
                     <g key={r.id + '-lbg'} style={{ cursor: 'pointer' }} onClick={() => setGanttSelectedRowId(r.id === _selId ? null : r.id)}>
                       <rect x={0} y={HEADER_H + i * ROW_H} width={LABEL_W} height={ROW_H} fill={bg} />
@@ -2547,7 +2807,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 const isPhase = r.indent === 0;
                 const isSelRow = _hasSel && _selRelatedRowIds.has(r.id);
                 const isSelPrimary = _selId === r.id;
-                const bg = isSelPrimary ? '#dbeafe' : isSelRow ? '#eff6ff' : isPhase ? (i % 2 === 0 ? '#f4f4f6' : '#ebebed') : (i % 2 === 0 ? '#fafafa' : '#f3f3f5');
+                const bg = isSelPrimary ? '#dbeafe' : isSelRow ? '#eff6ff' : _rowBg[i];
                 return (
                   <g key={r.id + "-bg"}>
                     <rect x={0} y={HEADER_H + i * ROW_H} width={svgTimeW} height={ROW_H} fill={bg} />

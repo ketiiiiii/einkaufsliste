@@ -68,19 +68,38 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
 .gantt-header .actions{display:flex;gap:8px;align-items:center}
 .btn{display:inline-flex;align-items:center;gap:4px;border-radius:8px;border:1px solid #e4e4e7;background:#fafafa;padding:4px 10px;font-size:12px;color:#52525b;cursor:pointer;transition:background .15s}
 .btn:hover{background:#f0f0f2}
+.btn.active{background:#fff;color:#18181b;box-shadow:0 1px 2px rgba(0,0,0,0.08);font-weight:600}
+.view-toggle{display:flex;border-radius:10px;border:1px solid #e4e4e7;background:#f4f4f5;padding:3px;gap:0}
+.view-toggle .btn{border:none;background:transparent;border-radius:8px;padding:4px 12px}
+.view-toggle .btn.active{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.08)}
 .gantt-body{flex:1;overflow:auto;padding:16px}
 .gantt-container{display:flex;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
 .label-col{flex-shrink:0;border-right:1px solid #e4e4e7;background:#fff;z-index:2;position:sticky;left:0}
 .time-col{overflow-x:auto;flex:1}
 .tooltip{position:fixed;z-index:1000;min-width:200px;max-width:360px;background:#fff;border:1px solid #d4d4d8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:8px 10px;font-size:12px;color:#3f3f46;white-space:pre-wrap;line-height:1.4;pointer-events:auto;display:none}
 .tooltip.visible{display:block;pointer-events:auto}
+.list-view{display:none}
+.list-view.active{display:block}
+.gantt-view.active .gantt-container{display:flex}
+.list-table{width:100%;border-collapse:collapse;font-size:12px;text-align:left}
+.list-table th{padding:8px 12px;font-weight:600;color:#71717a;background:#f9fafb;border-bottom:1px solid #e4e4e7}
+.list-table td{padding:6px 12px;border-bottom:1px solid #f4f4f5}
+.list-table .phase-row td{font-weight:600;color:#3f3f46}
+.list-table .sub-row td{color:#52525b}
+.list-table .note-cell{color:#a1a1aa;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list-table .dur-cell{text-align:right;font-variant-numeric:tabular-nums;color:#71717a}
+.list-table .day-cell{font-variant-numeric:tabular-nums;color:#71717a;width:48px}
 </style>
 </head>
 <body>
 <div class="gantt-wrap">
   <div class="gantt-header">
     <div style="display:flex;align-items:center;gap:12px">
-      <h1>${escapeHTML(title)} — Gantt</h1>
+      <h1>${escapeHTML(title)}</h1>
+      <div class="view-toggle">
+        <button class="btn active" id="viewGantt">Gantt</button>
+        <button class="btn" id="viewList">Liste</button>
+      </div>
       <button class="btn" id="toggleAll">⊟ Einklappen</button>
     </div>
     <div class="actions">
@@ -92,6 +111,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
       <div class="label-col" id="labelCol"></div>
       <div class="time-col" id="timeCol"></div>
     </div>
+    <div class="list-view" id="listView"></div>
   </div>
 </div>
 <div class="tooltip" id="tooltip"></div>
@@ -234,12 +254,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
     for (var h = 0; h <= MAX_H; h += HPD) dayTicks.push(h);
     var showHourTicks = MAX_H <= 48;
 
+    // ========== Precompute zebra backgrounds (restart per phase) ==========
+    var rowBg = [];
+    var stripe = 0;
+    rows.forEach(function(r) {
+      if (r.indent === 0) stripe = 0; else stripe++;
+      rowBg.push(stripe % 2 === 0 ? '#f4f4f5' : '#ffffff');
+    });
+
     // ========== Build Label SVG ==========
     var ls = '';
     ls += '<defs><clipPath id="lc"><rect x="0" y="0" width="' + (LABEL_W - 6) + '" height="' + svgH + '"/></clipPath></defs>';
     rows.forEach(function(r, i) {
       var isPhase = r.indent === 0;
-      var bg = isPhase ? (i % 2 === 0 ? '#f4f4f6' : '#ebebed') : (i % 2 === 0 ? '#fafafa' : '#f3f3f5');
+      var bg = rowBg[i];
       if (hasSel) { if (r.id === selectedRowId) bg = '#dbeafe'; else if (related.has(r.id)) bg = '#eff6ff'; }
       ls += '<rect data-row="' + i + '" data-rid="' + esc(r.id) + '" x="0" y="' + (HEADER_H + i * ROW_H) + '" width="' + LABEL_W + '" height="' + ROW_H + '" fill="' + bg + '" style="cursor:pointer" class="row-click"/>';
       ls += '<line x1="0" y1="' + (HEADER_H + (i + 1) * ROW_H) + '" x2="' + LABEL_W + '" y2="' + (HEADER_H + (i + 1) * ROW_H) + '" stroke="' + (isPhase ? '#d4d4d8' : '#e8e8ea') + '" stroke-width="1"/>';
@@ -276,7 +304,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
     ts += '<rect x="0" y="0" width="' + svgTimeW + '" height="' + svgH + '" fill="transparent" class="bg-click"/>';
     rows.forEach(function(r, i) {
       var isPhase = r.indent === 0;
-      var bg = isPhase ? (i % 2 === 0 ? '#f4f4f6' : '#ebebed') : (i % 2 === 0 ? '#fafafa' : '#f3f3f5');
+      var bg = rowBg[i];
       if (hasSel) { if (r.id === selectedRowId) bg = '#dbeafe'; else if (related.has(r.id)) bg = '#eff6ff'; }
       ts += '<rect x="0" y="' + (HEADER_H + i * ROW_H) + '" width="' + svgTimeW + '" height="' + ROW_H + '" fill="' + bg + '"/>';
       ts += '<line x1="0" y1="' + (HEADER_H + (i + 1) * ROW_H) + '" x2="' + svgTimeW + '" y2="' + (HEADER_H + (i + 1) * ROW_H) + '" stroke="' + (isPhase ? '#d4d4d8' : '#e8e8ea') + '" stroke-width="1"/>';
@@ -463,6 +491,61 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
     else phaseIds.forEach(function(p) { collapsed.add(p); });
     render();
   });
+
+  // ========== List view ==========
+  var currentView = 'gantt'; // 'gantt' or 'list'
+
+  function renderList() {
+    var html = '<div style="border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.04)">';
+    html += '<table class="list-table"><thead><tr><th class="day-cell">Tag</th><th>Task</th><th>Notiz</th><th class="dur-cell" style="width:56px">Dauer</th></tr></thead><tbody>';
+    ALL_ROWS.forEach(function(r) {
+      var col = COLORS[r.color] || '#a1a1aa';
+      var isPhase = r.indent === 0;
+      var bgAlpha = isPhase ? 0.15 : 0.07;
+      var bgA = Math.round(bgAlpha * 255).toString(16);
+      if (bgA.length < 2) bgA = '0' + bgA;
+      var bg = col + bgA;
+      var day = Math.floor(r.absoluteES / HPD) + 1;
+      var durH = r.hasSubTasks ? (r.absoluteEF - r.absoluteES) : toH(r.duration, r.unit) * Math.max(1, r.iterations || 1);
+      var cls = isPhase ? 'phase-row' : 'sub-row';
+      html += '<tr class="' + cls + '" style="background:' + bg + ';border-left:3px solid ' + col + '">';
+      html += '<td class="day-cell">' + day + '</td>';
+      html += '<td' + (isPhase ? '' : ' style="padding-left:24px"') + '>';
+      if (isPhase) html += '<span style="color:' + col + '">● </span>';
+      html += esc(r.title) + '</td>';
+      html += '<td class="note-cell">' + (r.note ? esc(r.note) : '') + '</td>';
+      html += '<td class="dur-cell">' + fmtDur(durH) + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    document.getElementById('listView').innerHTML = html;
+  }
+
+  function switchView(v) {
+    currentView = v;
+    var gc = document.getElementById('ganttContainer');
+    var lv = document.getElementById('listView');
+    var btnG = document.getElementById('viewGantt');
+    var btnL = document.getElementById('viewList');
+    var btnToggle = document.getElementById('toggleAll');
+    if (v === 'gantt') {
+      gc.style.display = 'flex';
+      lv.style.display = 'none';
+      btnG.classList.add('active');
+      btnL.classList.remove('active');
+      btnToggle.style.display = '';
+    } else {
+      gc.style.display = 'none';
+      lv.style.display = 'block';
+      btnG.classList.remove('active');
+      btnL.classList.add('active');
+      btnToggle.style.display = 'none';
+      renderList();
+    }
+  }
+
+  document.getElementById('viewGantt').addEventListener('click', function() { switchView('gantt'); });
+  document.getElementById('viewList').addEventListener('click', function() { switchView('list'); });
 
   // Initial render
   render();
