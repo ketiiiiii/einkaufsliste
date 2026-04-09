@@ -1575,7 +1575,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             </div>
           );
         }
-        const ROW_H = 36;
+        const ROW_H = 28;
         const LABEL_W = 300;
         const HR_W = 18; // pixels per hour
         const HEADER_H = 40;
@@ -2403,9 +2403,12 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                         }}
                         onMouseLeave={() => {
                           ganttDescHideTimer.current = setTimeout(() => {
-                            setGanttDescPopover((prev) => prev?.rowId === row.id ? null : prev);
-                            setGanttDescEditId((prev) => prev === row.id ? null : prev);
-                          }, 250);
+                            setGanttDescEditId((editId) => {
+                              if (editId === row.id) return editId; // keep popover open during editing
+                              setGanttDescPopover((prev) => prev?.rowId === row.id ? null : prev);
+                              return editId;
+                            });
+                          }, 300);
                         }}
                       >
                         {row.isCritical && row.indent === 0 ? '● ' : ''}{row.title}
@@ -2880,37 +2883,50 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               if (!hovRow) return null;
               const isEditing = ganttDescEditId === hovRow.id;
               const desc = hovRow.note || '';
+              const insertMarkdown = (prefix: string, suffix: string) => {
+                const ta = document.getElementById('gantt-desc-ta') as HTMLTextAreaElement | null;
+                if (!ta) return;
+                const start = ta.selectionStart, end = ta.selectionEnd;
+                const sel = ganttDescEditText.slice(start, end);
+                const newText = ganttDescEditText.slice(0, start) + prefix + sel + suffix + ganttDescEditText.slice(end);
+                setGanttDescEditText(newText);
+                setTimeout(() => { ta.focus(); ta.selectionStart = start + prefix.length; ta.selectionEnd = start + prefix.length + sel.length; }, 0);
+              };
               return (
                 <div
-                  style={{ position: 'fixed', left: ganttDescPopover.x, top: ganttDescPopover.y, zIndex: 1000, minWidth: 220, maxWidth: 380 }}
+                  style={{ position: 'fixed', left: Math.min(ganttDescPopover.x, window.innerWidth - 480), top: ganttDescPopover.y, zIndex: 1000, width: 440 }}
                   onMouseEnter={() => { if (ganttDescHideTimer.current) clearTimeout(ganttDescHideTimer.current); }}
-                  onMouseLeave={() => { setGanttDescPopover(null); setGanttDescEditId(null); }}
+                  onMouseLeave={() => { if (!isEditing) { setGanttDescPopover(null); setGanttDescEditId(null); } }}
                 >
-                  <div style={{ background: '#fff', border: '1px solid #d4d4d8', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', padding: '8px 10px', fontSize: 12, color: '#3f3f46' }}>
+                  <div style={{ background: '#fff', border: '1px solid #d4d4d8', borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.15)', padding: '10px 14px', fontSize: 12, color: '#3f3f46' }}>
                     {isEditing ? (
-                      <textarea
-                        autoFocus
-                        value={ganttDescEditText}
-                        onChange={(e) => setGanttDescEditText(e.target.value)}
-                        onBlur={() => {
-                          ganttUpdateTask(hovRow.id, (t) => ({ ...t, note: ganttDescEditText || undefined }));
-                          setGanttDescEditId(null);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Escape') { setGanttDescEditId(null); }
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            ganttUpdateTask(hovRow.id, (t) => ({ ...t, note: ganttDescEditText || undefined }));
-                            setGanttDescEditId(null);
-                          }
-                        }}
-                        style={{ width: '100%', minHeight: 60, border: '1px solid #93c5fd', borderRadius: 4, padding: '4px 6px', fontSize: 12, lineHeight: 1.4, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
-                        placeholder="Beschreibung eingeben…"
-                      />
+                      <>
+                        <div style={{ display: 'flex', gap: 2, marginBottom: 6, borderBottom: '1px solid #e4e4e7', paddingBottom: 6 }}>
+                          <button type="button" onClick={() => insertMarkdown('**', '**')} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #e4e4e7', background: '#fafafa', cursor: 'pointer', fontWeight: 700, fontSize: 12 }} title="Fett">B</button>
+                          <button type="button" onClick={() => insertMarkdown('_', '_')} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #e4e4e7', background: '#fafafa', cursor: 'pointer', fontStyle: 'italic', fontSize: 12 }} title="Kursiv">I</button>
+                          <button type="button" onClick={() => insertMarkdown('\n- ', '')} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #e4e4e7', background: '#fafafa', cursor: 'pointer', fontSize: 12 }} title="Aufzählung">•</button>
+                          <button type="button" onClick={() => insertMarkdown('\n1. ', '')} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #e4e4e7', background: '#fafafa', cursor: 'pointer', fontSize: 12 }} title="Nummerierung">1.</button>
+                        </div>
+                        <textarea
+                          id="gantt-desc-ta"
+                          autoFocus
+                          value={ganttDescEditText}
+                          onChange={(e) => setGanttDescEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') { setGanttDescEditText(desc); setGanttDescEditId(null); }
+                          }}
+                          style={{ width: '100%', minHeight: 100, border: '1px solid #93c5fd', borderRadius: 6, padding: '6px 8px', fontSize: 12, lineHeight: 1.5, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                          placeholder="Beschreibung eingeben…"
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}>
+                          <button type="button" onClick={() => { setGanttDescEditText(desc); setGanttDescEditId(null); }} style={{ padding: '4px 14px', borderRadius: 6, border: '1px solid #e4e4e7', background: '#fafafa', cursor: 'pointer', fontSize: 12, color: '#71717a' }}>Abbruch</button>
+                          <button type="button" onClick={() => { ganttUpdateTask(hovRow.id, (t) => ({ ...t, note: ganttDescEditText || undefined })); setGanttDescEditId(null); setGanttDescPopover(null); }} style={{ padding: '4px 14px', borderRadius: 6, border: '1px solid #93c5fd', background: '#3b82f6', cursor: 'pointer', fontSize: 12, color: '#fff', fontWeight: 600 }}>OK</button>
+                        </div>
+                      </>
                     ) : (
                       <div
                         onClick={() => { setGanttDescEditId(hovRow.id); setGanttDescEditText(desc); }}
-                        style={{ cursor: 'text', whiteSpace: 'pre-wrap', lineHeight: 1.4, minHeight: 20, color: desc ? '#3f3f46' : '#a1a1aa' }}
+                        style={{ cursor: 'text', whiteSpace: 'pre-wrap', lineHeight: 1.5, minHeight: 24, color: desc ? '#3f3f46' : '#a1a1aa' }}
                       >
                         {desc || 'Klicken um Beschreibung zu bearbeiten…'}
                       </div>
