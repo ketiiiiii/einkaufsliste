@@ -2326,8 +2326,8 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                           onDrillIn(row.id, row.title, true);
                         }
                       }}
-                      title="Ins Board springen"
                     >
+                      <title>Ins Board springen</title>
                       <rect x={LABEL_W - 22} y={cy - 8} width={16} height={16} rx={3} fill="#f4f4f5" stroke="#d4d4d8" strokeWidth={0.5} />
                       <g transform={`translate(${LABEL_W - 19}, ${cy - 5}) scale(0.625)`}>
                         <path d="M8 10a2 2 0 100-4 2 2 0 000 4z" fill="none" stroke="#71717a" strokeWidth="1.5" strokeLinecap="round"/>
