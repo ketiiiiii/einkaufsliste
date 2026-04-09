@@ -1,0 +1,201 @@
+{
+  "product": {
+    "id": "prd-master-theses",
+    "name": "Master Theses",
+    "color": "amber"
+  },
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Vorbereitung und Setup",
+      "duration_h": 22,
+      "lag_h": 0,
+      "children": [
+        { "id": "1.1", "title": "Zielbild, Scope und Forecast-Ziel definieren", "duration_h": 4, "lag_h": 2, "predecessors": [], "children": [] },
+        { "id": "1.2", "title": "Projektstruktur und Arbeitsbasis aufsetzen", "duration_h": 4, "lag_h": 1, "predecessors": ["P1:1.1"], "children": [
+            { "id": "1.2.1", "title": "Ordnerstruktur erstellen", "duration_h": 1, "lag_h": 0, "predecessors": [], "children": [] },
+            { "id": "1.2.2", "title": "Requirements und Basisumgebung aufsetzen", "duration_h": 2, "lag_h": 0, "predecessors": ["P1:1.2.1"], "children": [] },
+            { "id": "1.2.3", "title": "Git und Konfigurationsbasis vorbereiten", "duration_h": 1, "lag_h": 0, "predecessors": ["P1:1.2.2"], "children": [] }
+        ]},
+        { "id": "1.3", "title": "MLflow Grundsetup lokal einrichten", "duration_h": 4, "lag_h": 1, "predecessors": ["P1:1.2"], "children": [] },
+        { "id": "1.4", "title": "Architektur-Grundentscheid definieren", "duration_h": 5, "lag_h": 1, "predecessors": ["P1:1.3"], "children": [] },
+        { "id": "1.5", "title": "Standardschema und Base-Interfaces definieren", "duration_h": 5, "lag_h": 1, "predecessors": ["P1:1.4"], "children": [] }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Daten und Exploration",
+      "duration_h": 34,
+      "lag_h": 0,
+      "children": [
+        { "id": "2.1", "title": "Datenquellen und Zielgrössen definieren", "duration_h": 4, "lag_h": 1, "predecessors": ["P1:1.5"], "children": [] },
+        { "id": "2.2", "title": "CSV-Datenquelle anbinden", "duration_h": 5, "lag_h": 1, "predecessors": ["P2:2.1"], "children": [] },
+        { "id": "2.3", "title": "Rohdaten prüfen und standardisieren", "duration_h": 6, "lag_h": 1, "predecessors": ["P2:2.2"], "children": [
+            { "id": "2.3.1", "title": "Pflichtfelder prüfen (series_id, timestamp, target)", "duration_h": 1, "lag_h": 0, "predecessors": [], "children": [] },
+            { "id": "2.3.2", "title": "Datentypen prüfen und casten", "duration_h": 1, "lag_h": 0, "predecessors": ["P2:2.3.1"], "children": [] },
+            { "id": "2.3.3", "title": "Dubletten und Nullwerte behandeln", "duration_h": 2, "lag_h": 0, "predecessors": ["P2:2.3.2"], "children": [] },
+            { "id": "2.3.4", "title": "Standardschema intern herstellen", "duration_h": 2, "lag_h": 0, "predecessors": ["P2:2.3.3"], "children": [] }
+        ]},
+        { "id": "2.4", "title": "Erste explorative Datenanalyse (EDA)", "duration_h": 8, "lag_h": 2, "predecessors": ["P2:2.3"], "children": [] },
+        { "id": "2.5", "title": "Zeitreihen-Charakteristik analysieren (Saisonalität, Trend, Ausreisser)", "duration_h": 5, "lag_h": 1, "predecessors": ["P2:2.4"], "children": [] },
+        { "id": "2.6", "title": "Forecast-Horizont und Splitkonzept definieren", "duration_h": 6, "lag_h": 1, "predecessors": ["P2:2.5"], "children": [] }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Stand der Wissenschaft und Modellentscheid",
+      "duration_h": 32,
+      "lag_h": 0,
+      "children": [
+        { "id": "3.1", "title": "Zeitreihenprognose-Methoden surveyen (statistisch, ML, DL, Foundation)", "duration_h": 8, "lag_h": 0, "predecessors": ["P1:1.5"], "children": [] },
+        { "id": "3.2", "title": "Foundation Models auf Zeitreihen analysieren (TimesFM, Chronos, Lag-Llama)", "duration_h": 6, "lag_h": 1, "predecessors": ["P3:3.1"], "children": [] },
+        { "id": "3.3", "title": "Klassische und ML-Ansätze für Absatzprognosen analysieren", "duration_h": 5, "lag_h": 1, "predecessors": ["P3:3.1"], "children": [] },
+        { "id": "3.4", "title": "Bewertungskriterien und Anforderungsprofil definieren", "duration_h": 4, "lag_h": 2, "predecessors": ["P2:2.4", "P3:3.2", "P3:3.3"], "children": [] },
+        { "id": "3.5", "title": "Modell-Shortlist erstellen und gegenüberstellen", "duration_h": 5, "lag_h": 1, "predecessors": ["P3:3.4"], "children": [] },
+        { "id": "3.6", "title": "Modellentscheid dokumentieren und wissenschaftlich begründen", "duration_h": 4, "lag_h": 1, "predecessors": ["P3:3.5"], "children": [] }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Architektur und Pipeline",
+      "duration_h": 32,
+      "lag_h": 0,
+      "children": [
+        { "id": "4.1", "title": "Connector-Schicht implementieren (CSV + Interface)", "duration_h": 6, "lag_h": 1, "predecessors": ["P2:2.6", "P3:3.6"], "children": [] },
+        { "id": "4.2", "title": "Preprocessing- und Validierungslogik implementieren", "duration_h": 6, "lag_h": 1, "predecessors": ["P4:4.1"], "children": [] },
+        { "id": "4.3", "title": "Feature-Builder-Schicht implementieren", "duration_h": 5, "lag_h": 1, "predecessors": ["P4:4.2"], "children": [] },
+        { "id": "4.4", "title": "Train/Validation/Test-Split-Builder implementieren", "duration_h": 4, "lag_h": 1, "predecessors": ["P4:4.3"], "children": [] },
+        { "id": "4.5", "title": "Model-Interface und Prediction-Schema definieren (laut Modellentscheid)", "duration_h": 5, "lag_h": 1, "predecessors": ["P4:4.4", "P3:3.6"], "children": [] },
+        { "id": "4.6", "title": "MLflow-Logging-Struktur zentral implementieren", "duration_h": 6, "lag_h": 1, "predecessors": ["P4:4.5"], "children": [] }
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "Baseline und Modell 1 (V1)",
+      "duration_h": 48,
+      "lag_h": 0,
+      "children": [
+        { "id": "5.1", "title": "Naive Baseline implementieren (Last Value / Mean)", "duration_h": 5, "lag_h": 1, "predecessors": ["P4:4.6"], "children": [] },
+        { "id": "5.2", "title": "Modell 1 (aus P3-Entscheid) via Model-Interface integrieren", "duration_h": 10, "lag_h": 1, "predecessors": ["P5:5.1"], "children": [] },
+        { "id": "5.3", "title": "Train-Pipeline aufbauen", "duration_h": 6, "lag_h": 1, "predecessors": ["P5:5.2"], "children": [] },
+        { "id": "5.4", "title": "Eval-Pipeline aufbauen (MAE, RMSE, MAPE)", "duration_h": 5, "lag_h": 1, "predecessors": ["P5:5.3"], "children": [] },
+        { "id": "5.5", "title": "Predict-Pipeline aufbauen", "duration_h": 4, "lag_h": 1, "predecessors": ["P5:5.4"], "children": [] },
+        { "id": "5.6", "title": "MLflow vollständig anbinden (Params, Metrics, Artifacts)", "duration_h": 6, "lag_h": 1, "predecessors": ["P5:5.3", "P5:5.4", "P5:5.5"], "children": [] },
+        { "id": "5.7", "title": "End-to-End-Test CSV → Forecast → MLflow", "duration_h": 6, "lag_h": 2, "predecessors": ["P5:5.6"], "children": [] },
+        { "id": "5.8", "title": "Baseline vs. Modell 1 Erstvergleich in MLflow", "duration_h": 6, "lag_h": 2, "predecessors": ["P5:5.7"], "children": [] }
+      ]
+    },
+    {
+      "id": "P6",
+      "title": "Iterations-Zyklus 1: Basis-Features",
+      "duration_h": 36,
+      "lag_h": 0,
+      "loopConnections": [
+        { "from": "6.6", "to": "6.1", "loopDuration": 36, "loopDurationUnit": "h" }
+      ],
+      "children": [
+        { "id": "6.1", "title": "Analyse V1-Fehler und Hypothesen formulieren", "duration_h": 6, "lag_h": 2, "predecessors": ["P5:5.8"], "children": [] },
+        { "id": "6.2", "title": "Feature-Engineering Runde 1", "duration_h": 10, "lag_h": 1, "predecessors": ["P6:6.1"], "children": [
+            { "id": "6.2.1", "title": "Lag-Features (t-1, t-7, t-14, t-28)", "duration_h": 3, "lag_h": 0, "predecessors": [], "children": [] },
+            { "id": "6.2.2", "title": "Rolling Mean und Std (7d, 14d, 28d)", "duration_h": 3, "lag_h": 0, "predecessors": ["P6:6.2.1"], "children": [] },
+            { "id": "6.2.3", "title": "Kalenderfeatures (Wochentag, Monat, KW, Feiertag)", "duration_h": 2, "lag_h": 0, "predecessors": ["P6:6.2.2"], "children": [] },
+            { "id": "6.2.4", "title": "Feature-Set in MLflow als Artifact loggen", "duration_h": 2, "lag_h": 0, "predecessors": ["P6:6.2.3"], "children": [] }
+        ]},
+        { "id": "6.3", "title": "Training mit neuem Feature-Set", "duration_h": 6, "lag_h": 1, "predecessors": ["P6:6.2"], "children": [] },
+        { "id": "6.4", "title": "Evaluation und MLflow-Run dokumentieren", "duration_h": 4, "lag_h": 1, "predecessors": ["P6:6.3"], "children": [] },
+        { "id": "6.5", "title": "Fehleranalyse und Verbesserungsentscheid", "duration_h": 6, "lag_h": 2, "predecessors": ["P6:6.4"], "children": [] },
+        { "id": "6.6", "title": "Erkenntnisse für Zyklus 2 festhalten", "duration_h": 4, "lag_h": 1, "predecessors": ["P6:6.5"], "children": [] }
+      ]
+    },
+    {
+      "id": "P7",
+      "title": "Iterations-Zyklus 2: Split, Horizont, Tiefenfeatures",
+      "duration_h": 40,
+      "lag_h": 0,
+      "loopConnections": [
+        { "from": "7.7", "to": "7.1", "loopDuration": 40, "loopDurationUnit": "h" }
+      ],
+      "children": [
+        { "id": "7.1", "title": "Analyse Zyklus-1-Fehler nach Zeithorizont", "duration_h": 4, "lag_h": 2, "predecessors": ["P6:6.6"], "children": [] },
+        { "id": "7.2", "title": "Split-Strategie anpassen (Walk-Forward / Expanding Window)", "duration_h": 5, "lag_h": 1, "predecessors": ["P7:7.1"], "children": [] },
+        { "id": "7.3", "title": "Feature-Engineering Runde 2", "duration_h": 10, "lag_h": 1, "predecessors": ["P7:7.2"], "children": [
+            { "id": "7.3.1", "title": "Tiefere Lag-Strukturen und Interaktionen", "duration_h": 3, "lag_h": 0, "predecessors": [], "children": [] },
+            { "id": "7.3.2", "title": "Trend- und Saisonalitäts-Dekompositionen", "duration_h": 4, "lag_h": 0, "predecessors": ["P7:7.3.1"], "children": [] },
+            { "id": "7.3.3", "title": "Feature Importance analysieren und reduzieren", "duration_h": 3, "lag_h": 0, "predecessors": ["P7:7.3.2"], "children": [] }
+        ]},
+        { "id": "7.4", "title": "Training mit angepasstem Split und Features", "duration_h": 6, "lag_h": 1, "predecessors": ["P7:7.3"], "children": [] },
+        { "id": "7.5", "title": "Evaluation, Vergleich Zyklus 1 vs. 2 in MLflow", "duration_h": 5, "lag_h": 1, "predecessors": ["P7:7.4"], "children": [] },
+        { "id": "7.6", "title": "Fehleranalyse und Entscheid für Zyklus 3", "duration_h": 6, "lag_h": 2, "predecessors": ["P7:7.5"], "children": [] },
+        { "id": "7.7", "title": "Erkenntnisse für Zyklus 3 festhalten", "duration_h": 4, "lag_h": 1, "predecessors": ["P7:7.6"], "children": [] }
+      ]
+    },
+    {
+      "id": "P8",
+      "title": "Iterations-Zyklus 3: Zweites Modell (laut Shortlist P3)",
+      "duration_h": 45,
+      "lag_h": 0,
+      "loopConnections": [
+        { "from": "8.7", "to": "8.1", "loopDuration": 45, "loopDurationUnit": "h" }
+      ],
+      "children": [
+        { "id": "8.1", "title": "Zweites Modell aus P3-Shortlist übernehmen und konfigurieren", "duration_h": 3, "lag_h": 1, "predecessors": ["P7:7.7", "P3:3.6"], "children": [] },
+        { "id": "8.2", "title": "Zweites Modell via Model-Interface integrieren", "duration_h": 10, "lag_h": 1, "predecessors": ["P8:8.1"], "children": [] },
+        { "id": "8.3", "title": "MLflow-Tracking für zweites Modell anbinden", "duration_h": 4, "lag_h": 1, "predecessors": ["P8:8.2"], "children": [] },
+        { "id": "8.4", "title": "Training mit identischem Feature-Set wie Zyklus 2", "duration_h": 5, "lag_h": 1, "predecessors": ["P8:8.3"], "children": [] },
+        { "id": "8.5", "title": "Evaluation und Modellvergleich (Baseline, Modell-1, Modell-2)", "duration_h": 8, "lag_h": 2, "predecessors": ["P8:8.4"], "children": [] },
+        { "id": "8.6", "title": "Fehleranalyse und Stärken-/Schwächenprofil beider Modelle", "duration_h": 7, "lag_h": 2, "predecessors": ["P8:8.5"], "children": [] },
+        { "id": "8.7", "title": "Feature-Engineering Runde 3 (opt. exogene Variablen)", "duration_h": 8, "lag_h": 1, "predecessors": ["P8:8.6"], "children": [
+            { "id": "8.7.1", "title": "Exogene Variablen definieren (Wetter, Feiertage, Aktionen)", "duration_h": 2, "lag_h": 0, "predecessors": [], "children": [] },
+            { "id": "8.7.2", "title": "Exogene Features in Feature-Builder integrieren", "duration_h": 4, "lag_h": 0, "predecessors": ["P8:8.7.1"], "children": [] },
+            { "id": "8.7.3", "title": "Erneutes Training und Evaluationsrunde", "duration_h": 2, "lag_h": 0, "predecessors": ["P8:8.7.2"], "children": [] }
+        ]}
+      ]
+    },
+    {
+      "id": "P9",
+      "title": "Finaler Champion und Abschluss-Evaluation",
+      "duration_h": 30,
+      "lag_h": 0,
+      "children": [
+        { "id": "9.1", "title": "Champion-Modell aus MLflow-Runs bestimmen", "duration_h": 4, "lag_h": 1, "predecessors": ["P8:8.7"], "children": [] },
+        { "id": "9.2", "title": "Finale Backtests auf Test-Set durchführen", "duration_h": 8, "lag_h": 1, "predecessors": ["P9:9.1"], "children": [] },
+        { "id": "9.3", "title": "Forecast-vs-Actual-Reports erzeugen", "duration_h": 4, "lag_h": 1, "predecessors": ["P9:9.2"], "children": [] },
+        { "id": "9.4", "title": "Alle Runs in MLflow konsolidieren und taggen", "duration_h": 4, "lag_h": 1, "predecessors": ["P9:9.3"], "children": [] },
+        { "id": "9.5", "title": "Model-Registry-Eintrag und Deployment-Konzept", "duration_h": 4, "lag_h": 1, "predecessors": ["P9:9.4"], "children": [] },
+        { "id": "9.6", "title": "Erweiterungskonzept Proffix REST API skizzieren", "duration_h": 3, "lag_h": 1, "predecessors": ["P9:9.5"], "children": [] },
+        { "id": "9.7", "title": "Review Architektur-Erweiterbarkeit für weitere Modelle", "duration_h": 3, "lag_h": 1, "predecessors": ["P9:9.6"], "children": [] }
+      ]
+    },
+    {
+      "id": "P10",
+      "title": "Schreiben der Thesis",
+      "duration_h": 107,
+      "lag_h": 0,
+      "children": [
+        { "id": "10.1", "title": "Einleitung, Problemstellung und Zielbild verfassen", "duration_h": 6, "lag_h": 1, "predecessors": ["P2:2.1"], "children": [] },
+        { "id": "10.2", "title": "Stand der Wissenschaft Kapitel schreiben (basiert auf P3-Recherche)", "duration_h": 18, "lag_h": 2, "predecessors": ["P3:3.6"], "children": [] },
+        { "id": "10.3", "title": "Methodik und Architektur dokumentieren", "duration_h": 18, "lag_h": 2, "predecessors": ["P4"], "children": [] },
+        { "id": "10.4", "title": "Implementierung V1 und Pipelines dokumentieren", "duration_h": 12, "lag_h": 2, "predecessors": ["P5"], "children": [] },
+        { "id": "10.5", "title": "Iterationszyklen und Lerneffekte dokumentieren", "duration_h": 18, "lag_h": 2, "predecessors": ["P6", "P7", "P8"], "children": [] },
+        { "id": "10.6", "title": "Evaluation und Modellvergleich dokumentieren", "duration_h": 10, "lag_h": 2, "predecessors": ["P9:9.4"], "children": [] },
+        { "id": "10.7", "title": "Handlungsempfehlung für Watosoft AG erarbeiten", "duration_h": 8, "lag_h": 1, "predecessors": ["P9:9.7"], "children": [] },
+        { "id": "10.8", "title": "Gesamtdokument überarbeiten und formatieren", "duration_h": 10, "lag_h": 2, "predecessors": ["P10:10.1", "P10:10.2", "P10:10.3", "P10:10.4", "P10:10.5", "P10:10.6", "P10:10.7"], "children": [] },
+        { "id": "10.9", "title": "Abstract, Summary und Schlussfassung", "duration_h": 6, "lag_h": 1, "predecessors": ["P10:10.8"], "children": [] },
+        { "id": "10.10", "title": "Anhang: MLflow-Screenshots und Code-Referenzen", "duration_h": 5, "lag_h": 1, "predecessors": ["P10:10.8"], "children": [] }
+      ]
+    },
+    {
+      "id": "P11",
+      "title": "Finalisierung und Abgabe",
+      "duration_h": 14,
+      "lag_h": 0,
+      "children": [
+        { "id": "11.1", "title": "Endreview fachlich", "duration_h": 3, "lag_h": 1, "predecessors": ["P10:10.9", "P10:10.10"], "children": [] },
+        { "id": "11.2", "title": "Endreview formal (Zitierungen, Layout, Normvorgaben)", "duration_h": 3, "lag_h": 1, "predecessors": ["P11:11.1"], "children": [] },
+        { "id": "11.3", "title": "Korrekturen einarbeiten", "duration_h": 3, "lag_h": 1, "predecessors": ["P11:11.2"], "children": [] },
+        { "id": "11.4", "title": "Abgabe vorbereiten und einreichen", "duration_h": 2, "lag_h": 0, "predecessors": ["P11:11.3"], "children": [] },
+        { "id": "11.5", "title": "Präsentation vorbereiten und üben", "duration_h": 3, "lag_h": 0, "predecessors": ["P11:11.3"], "children": [] }
+      ]
+    }
+  ]
+}

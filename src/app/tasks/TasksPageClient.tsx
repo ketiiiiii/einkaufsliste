@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { TaskBoard, type BoardState, type CrossConnection, type VariantTab } from "./TaskBoard";
 import { loadBoardState, saveBoardState } from "./board-actions";
@@ -561,6 +561,8 @@ export function TasksPageClient() {
 
   // Product/Group tree state
   const [appState, setAppState] = useState<AppRootState>({ products: [], activeProductId: null });
+  const appStateRef = useRef<AppRootState>({ products: [], activeProductId: null });
+  useEffect(() => { appStateRef.current = appState; }, [appState]);
   const [showGroupTree, setShowGroupTree] = useState(true);
 
   // Root board state (active group's board — persisted via appState)
@@ -571,6 +573,15 @@ export function TasksPageClient() {
   const [boardLoaded, setBoardLoaded] = useState(false);
   // Drill-in path for 3D navigation
   const [drillPath, setDrillPath] = useState<DrillStep[]>([]);
+  // Track if navigation came from Gantt fullscreen (to return back)
+  const [cameFromGantt, setCameFromGantt] = useState(false);
+  // Reset cameFromGantt after root board has mounted with gantt-fullscreen
+  useEffect(() => {
+    if (cameFromGantt && drillPath.length === 0) {
+      const t = setTimeout(() => setCameFromGantt(false), 100);
+      return () => clearTimeout(t);
+    }
+  }, [cameFromGantt, drillPath.length]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Always-current ref so handleBoardStateChange never has a stale drillPath
   const drillPathRef = useRef<DrillStep[]>([]);
@@ -622,22 +633,33 @@ export function TasksPageClient() {
     });
   }, []);
 
+  // Build save payload from latest refs (avoids stale closures in timers)
+  const buildSavePayload = useRef(() => {
+    const app = appStateRef.current;
+    const board = rootBoardRef.current;
+    const { activeProductId, products } = app;
+    return activeProductId
+      ? {
+          ...app,
+          products: updateProductIn(products, activeProductId, (p) =>
+            p.activeGroupId
+              ? { ...p, groups: updateGroupIn(p.groups, p.activeGroupId, (g) => ({ ...g, boardState: board })) }
+              : p
+          ),
+        }
+      : app;
+  }).current;
+
+  const pendingSaveRef = useRef(false);
+
   // Debounced save: embeds current rootBoard into the active product/group before persisting
   useEffect(() => {
     if (!boardLoaded) return;
+    pendingSaveRef.current = true;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      const { activeProductId, products } = appState;
-      const stateToSave: AppRootState = activeProductId
-        ? {
-            ...appState,
-            products: updateProductIn(products, activeProductId, (p) =>
-              p.activeGroupId
-                ? { ...p, groups: updateGroupIn(p.groups, p.activeGroupId, (g) => ({ ...g, boardState: rootBoard })) }
-                : p
-            ),
-          }
-        : appState;
+      pendingSaveRef.current = false;
+      const stateToSave = buildSavePayload();
       saveBoardState(JSON.stringify(stateToSave))
         .then(() => {
           setSaveStatus("saved");
@@ -649,7 +671,22 @@ export function TasksPageClient() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [rootBoard, appState, boardLoaded]);
+  }, [rootBoard, appState, boardLoaded, buildSavePayload]);
+
+  // Flush pending save on page unload (server restart, tab close, navigation)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!pendingSaveRef.current) return;
+      pendingSaveRef.current = false;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      const stateToSave = buildSavePayload();
+      // Use sendBeacon for reliable delivery even during page unload
+      const blob = new Blob([JSON.stringify({ stateJson: JSON.stringify(stateToSave) })], { type: "application/json" });
+      navigator.sendBeacon("/api/save-board", blob);
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [buildSavePayload]);
 
   const handleBoardStateChange = (newBoard: BoardState) => {
     const dp = drillPathRef.current;
@@ -667,13 +704,33 @@ export function TasksPageClient() {
     });
   };
 
-  const handleDrillIn = (taskId: string, taskTitle: string) => {
+  const handleDrillIn = (taskId: string, taskTitle: string, fromGantt?: boolean) => {
+    if (fromGantt) setCameFromGantt(true);
     setDrillPath((prev) => [...prev, { taskId, title: taskTitle }]);
   };
 
   const handleCrossConnectionsChange = (conns: CrossConnection[]) => {
     setRootBoard((root) => ({ ...root, crossConnections: conns }));
   };
+
+  // Derive crossConnections from root connections with composite IDs ("P1:1.5" → "P2:2.1")
+  // if no explicit crossConnections are stored yet.
+  const effectiveCrossConnections = useMemo<CrossConnection[]>(() => {
+    if (rootBoard.crossConnections) return rootBoard.crossConnections;
+    return rootBoard.connections
+      .filter((c) => c.from.includes(":") && c.to.includes(":"))
+      .map((c) => {
+        const [fromPhaseId, ...fromRest] = c.from.split(":");
+        const [toPhaseId, ...toRest] = c.to.split(":");
+        return {
+          id: c.id,
+          fromPhaseId,
+          fromTaskId: fromRest.join(":"),
+          toPhaseId,
+          toTaskId: toRest.join(":"),
+        };
+      });
+  }, [rootBoard.crossConnections, rootBoard.connections]);
 
   const handleNavigateToPhase = (phaseId: string, phaseTitle: string) => {
     setDrillPath([{ taskId: phaseId, title: phaseTitle }]);
@@ -1081,7 +1138,7 @@ export function TasksPageClient() {
                 })()}
                 rootBoard={drillPath.length === 1 ? rootBoard : undefined}
                 currentPhaseId={drillPath.length === 1 ? drillPath[0].taskId : undefined}
-                crossConnections={rootBoard.crossConnections}
+                crossConnections={effectiveCrossConnections}
                 onCrossConnectionsChange={handleCrossConnectionsChange}
                 onNavigateToPhase={handleNavigateToPhase}
                 breadcrumbSlot={breadcrumbNav}
@@ -1094,6 +1151,11 @@ export function TasksPageClient() {
                     onDelete={handleDeleteVariant}
                   />
                 }
+                returnToGantt={drillPath.length > 0 && cameFromGantt ? () => {
+                  setDrillPath([]);
+                  // cameFromGantt stays true so root board opens in gantt-fullscreen
+                } : undefined}
+                initialView={drillPath.length === 0 && cameFromGantt ? "gantt-fullscreen" : undefined}
               />
             );
           })()}

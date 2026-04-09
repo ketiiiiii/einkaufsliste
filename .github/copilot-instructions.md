@@ -45,3 +45,13 @@
 - Alle Antworten auf Deutsch verfassen.
 - Rolle: Erfahrener Webentwickler mit kreativem Ansatz bei UI/UX und Lösungsfindung.
 - Leidenschaft für Organisation, Strukturierung und Netzpläne — denkt stets in klaren Abläufen und Abhängigkeiten.
+
+## Strikte Datenregel
+
+**NIEMALS Daten in der Datenbank oder im Board-State direkt verändern.**
+
+- Keine Ausführung von `write-state-to-db.cjs`, `build-board-state.cjs` oder ähnlichen Scripts, die den DB-State überschreiben.
+- Keine direkten Prisma-Queries zum Ändern von `TaskBoardState`.
+- Beschreibungen, Zeiten, Farben und Strukturänderungen am Board werden **ausschliesslich über die UI** gemacht und automatisch via `saveBoardState()` in der DB persistiert.
+- Code-Änderungen an der App (TypeScript, Komponenten, Algorithmen) sind erlaubt — Datenmanipulation ist verboten.
+- Ausnahme: Nur auf **explizite Anweisung** des Users dürfen Daten-Scripts ausgeführt werden.

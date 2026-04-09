@@ -1,0 +1,470 @@
+{
+  "version": 4,
+  "created": "2026-04-02",
+  "type": "Forschungsarbeit",
+  "totalHours": 349,
+  "budget": {
+    "development": 245,
+    "writing": 104,
+    "note": "Antrag: 220h Entwicklung + 115h Schreiben = 335h. Neue Planung: +14h durch V3 Foundation Model Phase."
+  },
+  "timeline": {
+    "start": "KW 13 (2026-03-23)",
+    "end": "KW 42 (2026-10-18)",
+    "weeks": 30,
+    "vacationWeeks": "KW 30-31",
+    "usableWeeks": 28,
+    "hoursPerWeek": 24,
+    "availableHours": 672
+  },
+  "research": {
+    "question": "Wie unterscheiden sich klassische statistische, Deep-Learning-basierte und vortrainierte Foundation-Modelle in ihrer Eignung zur Erstellung belastbarer Absatzprognosen auf Basis historischer Proffix-Verkaufsdaten?",
+    "hypotheses": {
+      "H0": "Es besteht kein signifikanter Unterschied in der Prognosegüte zwischen den drei Modellklassen.",
+      "H1": "Ein eigentrainiertes Deep-Learning-Modell erzielt signifikant bessere Metriken als ein klassisch-statistisches Modell (bei gleichen Features).",
+      "H2": "Ein vortrainiertes Foundation Model erreicht ohne Feature Engineering eine vergleichbare Prognosegüte wie die eigentrainierten Modelle."
+    },
+    "target": "Absatzmenge pro Artikel",
+    "horizons": ["30d", "90d", "180d"],
+    "metrics": ["MAE", "RMSE", "MAPE"],
+    "dataSource": "Debitorrelevante Verkaufspositionen aus Proffix (CSV via Wato Connect, FTP)",
+    "modelClasses": {
+      "V1": "Klassisch-statistisch (ARIMA, ETS, Prophet) — volle Kontrolle über Features und Parameter",
+      "V2": "Deep Learning (LSTM, N-BEATS, TFT) — volle Kontrolle über Architektur und Features",
+      "V3": "Foundation Model (Chronos, TimeGPT, Lag-Llama) — Benchmark ohne Feature-Kontrolle"
+    }
+  },
+  "product": {
+    "id": "prd-master-thesis",
+    "name": "Proffix Forecast AI Engine"
+  },
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Vorbereitung & Setup",
+      "color": "amber",
+      "duration_h": 20,
+      "lag_h": 0,
+      "children": [
+        {
+          "id": "1.1",
+          "title": "Forschungsfrage, Hypothesen und Scope festlegen",
+          "description": "Forschungsfrage formulieren (Vergleich 3 Modellklassen). H0/H1/H2 ableiten. Zielgrösse, Horizonte (30d/90d/180d), Metriken und Scope-Abgrenzung festlegen.",
+          "duration_h": 4, "lag_h": 0, "predecessors": [], "children": []
+        },
+        {
+          "id": "1.2",
+          "title": "Projektstruktur und Umgebung aufsetzen",
+          "description": "Python-Projekt mit Ordnerstruktur (data/, notebooks/, src/, models/, configs/), venv, Requirements und Git initialisieren.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P1:1.1"], "children": []
+        },
+        {
+          "id": "1.3",
+          "title": "MLflow-Tracking lokal einrichten",
+          "description": "MLflow installieren, Experiment anlegen, Test-Run mit Dummy-Metriken loggen und in UI prüfen.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P1:1.2"], "children": []
+        },
+        {
+          "id": "1.4",
+          "title": "Architekturentscheid und Modell-Shortlist festlegen",
+          "description": "Pipeline-Architektur definieren (Connector → Preprocessing → Features → Model → Eval). Shortlist pro Modellklasse wählen und begründen.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P1:1.3"], "children": []
+        },
+        {
+          "id": "1.5",
+          "title": "Datenschema und Modell-Interface spezifizieren",
+          "description": "Einheitliches Ein-/Ausgabeschema und abstraktes Modell-Interface (fit/predict/evaluate) für alle 3 Klassen definieren.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P1:1.4"], "children": []
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Daten & Exploration",
+      "color": "sky",
+      "duration_h": 31,
+      "lag_h": 0,
+      "children": [
+        {
+          "id": "2.1",
+          "title": "Datenquellen und Zielgrössen definieren",
+          "description": "Verfügbare Proffix-Exporte (Verkaufspositionen via Wato Connect → CSV via FTP) sichten. Zielgrösse und Kovariaten festlegen.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P1:1.5"], "children": []
+        },
+        {
+          "id": "2.2",
+          "title": "Proffix-Daten anbinden",
+          "description": "CSV-Import implementieren. Rohdaten in einheitliche Struktur laden.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P2:2.1"], "children": []
+        },
+        {
+          "id": "2.3",
+          "title": "Datenqualität prüfen und Preprocessing implementieren",
+          "description": "Pflichtfelder, Datentypen, Dubletten, Nullwerte prüfen und behandeln. Standardschema herstellen. Preprocessing gleich als wiederverwendbare Pipeline-Stufe umsetzen.",
+          "duration_h": 6, "lag_h": 1, "predecessors": ["P2:2.2"], "children": []
+        },
+        {
+          "id": "2.4",
+          "title": "Explorative Datenanalyse (EDA)",
+          "description": "Verteilungen, Korrelationen, Zeitverläufe visualisieren. Erste Muster und Auffälligkeiten identifizieren.",
+          "duration_h": 7, "lag_h": 1, "predecessors": ["P2:2.3"], "children": []
+        },
+        {
+          "id": "2.5",
+          "title": "Zeitreihen-Charakteristik analysieren",
+          "description": "Saisonalität, Trend, Stationarität und Ausreisser untersuchen. Dekompositionen durchführen.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["P2:2.4"], "children": []
+        },
+        {
+          "id": "2.6",
+          "title": "Forecast-Horizont und Splitkonzept festlegen",
+          "description": "Horizonte (30d/90d/180d) und Train/Val/Test-Split verbindlich definieren. Ggf. Scope-Refinement aus EDA-Erkenntnissen.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["P2:2.5"], "children": []
+        }
+      ],
+      "loopConnections": [
+        { "from": "2.5", "to": "2.2", "loopDuration": 28, "loopDurationUnit": "h" }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Architektur & Pipeline",
+      "color": "rose",
+      "duration_h": 25,
+      "lag_h": 0,
+      "children": [
+        {
+          "id": "3.1",
+          "title": "Connector-Schicht implementieren",
+          "description": "CSV-Loader mit einheitlichem Interface bauen. Erweiterbar für weitere Quellen.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["P2:2.6"], "children": []
+        },
+        {
+          "id": "3.2",
+          "title": "Feature-Engineering-Modul implementieren",
+          "description": "Lag-, Rolling-, Kalender-Features und Dekompositionen als konfigurierbares Modul.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["P3:3.1"], "children": []
+        },
+        {
+          "id": "3.3",
+          "title": "Train/Val/Test-Split-Builder implementieren",
+          "description": "Zeitbasierter Split für alle 3 Horizonte (30d/90d/180d).",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P3:3.2"], "children": []
+        },
+        {
+          "id": "3.4",
+          "title": "Modell-Interface und Prediction-Schema implementieren",
+          "description": "Abstraktes Interface (fit/predict/evaluate) und Output-Format umsetzen.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["P3:3.3"], "children": []
+        },
+        {
+          "id": "3.5",
+          "title": "MLflow-Logging zentral einbinden",
+          "description": "Metriken, Parameter, Artefakte und Modellversionen automatisch pro Run loggen.",
+          "duration_h": 6, "lag_h": 1, "predecessors": ["P3:3.4"], "children": []
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "V1 Klassisch — Baseline & Iterationszyklen",
+      "color": "emerald",
+      "duration_h": 75,
+      "lag_h": 0,
+      "loopConnections": [
+        { "from": "4.6", "to": "4.4", "loopDuration": 35, "loopDurationUnit": "h" }
+      ],
+      "children": [
+        {
+          "id": "4.1",
+          "title": "Naive Baseline implementieren",
+          "description": "Last-Value- und Mean-Baseline als Referenzmodell umsetzen.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P3:3.5"], "children": []
+        },
+        {
+          "id": "4.2",
+          "title": "Kandidaten-Modelle evaluieren",
+          "description": "ARIMA, ETS, Prophet jeweils mit minimalem Feature-Set als Basis-Run ausführen. Auf Validierungsset vergleichen, bestes Modell als V1-Basis wählen.",
+          "duration_h": 8, "lag_h": 1, "predecessors": ["P4:4.1"], "children": []
+        },
+        {
+          "id": "4.3",
+          "title": "V1-Modell integrieren und E2E testen",
+          "description": "Gewähltes Modell sauber via Modell-Interface anbinden. End-to-End Durchlauf prüfen.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["P4:4.2"], "children": []
+        },
+        {
+          "id": "4.4",
+          "title": "Feature Engineering vertiefen",
+          "description": "Über Basis-Features hinaus: Lag, Rolling, Kalender, Dekompositionen, Interaktionen — iterativ je nach Hypothese.",
+          "duration_h": 8, "lag_h": 0, "predecessors": ["P4:4.3"], "children": []
+        },
+        {
+          "id": "4.5",
+          "title": "Training, MLflow-Run und Evaluation",
+          "description": "Modell trainieren, Metriken loggen (MAE, RMSE, MAPE), Fehleranalyse durchführen.",
+          "duration_h": 8, "lag_h": 0, "predecessors": ["P4:4.4"], "children": []
+        },
+        {
+          "id": "4.6",
+          "title": "Erkenntnisse festhalten, nächste Hypothese",
+          "description": "Feature Importance auswerten, nächsten Iterationsschritt ableiten.",
+          "duration_h": 4, "lag_h": 0, "predecessors": ["P4:4.5"], "children": []
+        },
+        {
+          "id": "4.7",
+          "title": "Baseline vs. V1 Endvergleich",
+          "description": "Finaler Vergleich nach allen Iterationen in MLflow.",
+          "duration_h": 3, "lag_h": 1, "predecessors": ["P4:4.6"], "children": []
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "V2 Deep Learning — Iterationszyklen",
+      "color": "violet",
+      "duration_h": 40,
+      "lag_h": 0,
+      "loopConnections": [
+        { "from": "5.5", "to": "5.3", "loopDuration": 12, "loopDurationUnit": "h" }
+      ],
+      "children": [
+        {
+          "id": "5.1",
+          "title": "DL-Kandidaten evaluieren",
+          "description": "LSTM, N-BEATS, TFT jeweils mit minimalem Feature-Set als Basis-Run ausführen. Auf Validierungsset vergleichen, bestes Modell als V2-Basis wählen.",
+          "duration_h": 6, "lag_h": 1, "predecessors": ["P3:3.5"], "children": []
+        },
+        {
+          "id": "5.2",
+          "title": "V2-Modell integrieren und E2E testen",
+          "description": "Gewähltes DL-Modell via Modell-Interface anbinden. End-to-End Durchlauf prüfen.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["P5:5.1"], "children": []
+        },
+        {
+          "id": "5.3",
+          "title": "Features anpassen / exogene Variablen",
+          "description": "Feature-Set anpassen, ggf. Wetter-/Aktionsdaten einbinden — iterativ je nach Hypothese. Wartet auf V1-Erkenntnisse für gezielte Feature-Auswahl.",
+          "duration_h": 5, "lag_h": 0, "predecessors": ["P5:5.2", "P4:4.7"], "children": []
+        },
+        {
+          "id": "5.4",
+          "title": "Training, MLflow-Run und Evaluation",
+          "description": "DL-Modell trainieren, Metriken loggen, Fehleranalyse V2.",
+          "duration_h": 5, "lag_h": 0, "predecessors": ["P5:5.3"], "children": []
+        },
+        {
+          "id": "5.5",
+          "title": "Erkenntnisse festhalten, nächste Hypothese",
+          "description": "Stärken/Schwächen V2 dokumentieren, Vergleich mit V1 ableiten.",
+          "duration_h": 3, "lag_h": 0, "predecessors": ["P5:5.4"], "children": []
+        },
+        {
+          "id": "5.6",
+          "title": "V1 vs. V2 Endvergleich",
+          "description": "Finaler Vergleich beider eigentrainierter Modellklassen in MLflow.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P5:5.5"], "children": []
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "title": "V3 Foundation Model — Benchmark-Evaluation",
+      "color": "orange",
+      "duration_h": 15,
+      "lag_h": 0,
+      "children": [
+        {
+          "id": "6.1",
+          "title": "Foundation Model auswählen und anbinden",
+          "description": "Modell wählen (z.B. Chronos, TimeGPT), API/Lib anbinden. Startet parallel zu V1/V2 — kein Feature Engineering nötig (Zero-Shot).",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P3:3.5"], "children": []
+        },
+        {
+          "id": "6.2",
+          "title": "Zero-Shot-Forecast ausführen",
+          "description": "Prediction ohne eigenes Training auf gleichen Daten/Splits wie V1/V2.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P6:6.1"], "children": []
+        },
+        {
+          "id": "6.3",
+          "title": "Evaluation und MLflow-Logging",
+          "description": "Gleiche Metriken wie V1/V2 berechnen und loggen.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P6:6.2"], "children": []
+        },
+        {
+          "id": "6.4",
+          "title": "Vergleich V1 vs. V2 vs. V3",
+          "description": "Systematischer 3-Klassen-Vergleich über alle Horizonte (30d/90d/180d). Wartet auf Abschluss aller drei Stränge.",
+          "duration_h": 3, "lag_h": 1, "predecessors": ["P6:6.3", "P5:5.6", "P4:4.7"], "children": []
+        }
+      ]
+    },
+    {
+      "id": "P7",
+      "title": "Champion, Deployment & Praxistest",
+      "color": "teal",
+      "duration_h": 25,
+      "lag_h": 0,
+      "children": [
+        {
+          "id": "7.1",
+          "title": "Champion-Modell bestimmen",
+          "description": "Bestes Modell aus V1/V2/V3-Vergleich in MLflow identifizieren und begründen.",
+          "duration_h": 3, "lag_h": 1, "predecessors": ["P6:6.4", "P5:5.6", "P4:4.7"], "children": []
+        },
+        {
+          "id": "7.2",
+          "title": "Finale Backtests auf Testset",
+          "description": "Champion auf zurückgehaltenem Testset evaluieren (30d/90d/180d).",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P7:7.1"], "children": []
+        },
+        {
+          "id": "7.3",
+          "title": "Forecast-vs-Actual Reports erzeugen",
+          "description": "Visualisierungen und Tabellen: Prognose vs. tatsächliche Werte pro Horizont.",
+          "duration_h": 3, "lag_h": 1, "predecessors": ["P7:7.2"], "children": []
+        },
+        {
+          "id": "7.4",
+          "title": "Datenfluss end-to-end umsetzen",
+          "description": "Proffix → Wato Connect → CSV via FTP → Modell → Forecast → CSV via FTP → zurück an Wato Connect → SQL.",
+          "duration_h": 6, "lag_h": 1, "predecessors": ["P7:7.3"], "children": []
+        },
+        {
+          "id": "7.5",
+          "title": "MLflow-Runs konsolidieren und taggen",
+          "description": "Alle Runs bereinigen, taggen, bestes Modell in Model Registry registrieren.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P7:7.4"], "children": []
+        },
+        {
+          "id": "7.6",
+          "title": "Praxistest mit Proffix-Kunde",
+          "description": "Forecast auf echten Kundendaten ausführen, Ergebnisse mit Anwender besprechen.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["P7:7.5"], "children": []
+        }
+      ]
+    },
+    {
+      "id": "P8",
+      "title": "Finalisierung & Abgabe",
+      "color": "indigo",
+      "duration_h": 14,
+      "lag_h": 0,
+      "children": [
+        {
+          "id": "8.1",
+          "title": "Endreview fachlich",
+          "description": "Forschungsfrage beantwortet? Hypothesen validiert? Schlussfolgerungen stringent?",
+          "duration_h": 3, "lag_h": 1, "predecessors": ["P7:7.6"], "children": []
+        },
+        {
+          "id": "8.2",
+          "title": "Endreview formal",
+          "description": "Zitierungen, Layout, Normvorgaben der Hochschule prüfen.",
+          "duration_h": 3, "lag_h": 1, "predecessors": ["P8:8.1"], "children": []
+        },
+        {
+          "id": "8.3",
+          "title": "Korrekturen einarbeiten",
+          "description": "Feedback aus Reviews umsetzen.",
+          "duration_h": 3, "lag_h": 1, "predecessors": ["P8:8.2"], "children": []
+        },
+        {
+          "id": "8.4",
+          "title": "Abgabe vorbereiten und einreichen",
+          "description": "Druck/PDF, Einreichung, Begleitdokumente.",
+          "duration_h": 2, "lag_h": 0, "predecessors": ["P8:8.3"], "children": []
+        },
+        {
+          "id": "8.5",
+          "title": "Präsentation vorbereiten und üben",
+          "description": "Folien erstellen, Verteidigung üben.",
+          "duration_h": 3, "lag_h": 0, "predecessors": ["P8:8.3"], "children": []
+        }
+      ]
+    },
+    {
+      "id": "PS",
+      "title": "Schreiben der Thesis (parallel, durchgehend)",
+      "color": "mint",
+      "duration_h": 104,
+      "lag_h": 0,
+      "parallel": true,
+      "children": [
+        {
+          "id": "S.1",
+          "title": "Einleitung und Problemstellung verfassen",
+          "description": "Ausgangslage, Forschungsfrage, Hypothesen, Zielbild.",
+          "duration_h": 6, "lag_h": 1, "predecessors": ["P2:2.1"], "children": []
+        },
+        {
+          "id": "S.2",
+          "title": "Stand der Technik beschreiben",
+          "description": "MLflow, Proffix-Ökosystem, Wato Connect, DGX Spark.",
+          "duration_h": 12, "lag_h": 1, "predecessors": ["P1:1.5"], "children": []
+        },
+        {
+          "id": "S.3",
+          "title": "Stand der Wissenschaft beschreiben",
+          "description": "Forecasting-Methoden, Modell-Shortlist begründen, Foundation Models einordnen.",
+          "duration_h": 20, "lag_h": 1, "predecessors": ["P1:1.5"], "children": []
+        },
+        {
+          "id": "S.4",
+          "title": "Methodik und Architektur dokumentieren",
+          "description": "Pipeline, Datenschema, Modell-Interface, Split-Strategie.",
+          "duration_h": 12, "lag_h": 1, "predecessors": ["P3:3.5"], "children": []
+        },
+        {
+          "id": "S.5",
+          "title": "V1 Klassisch dokumentieren",
+          "description": "Kandidatenwahl, Feature Engineering, Iterationszyklen, Ergebnisse.",
+          "duration_h": 10, "lag_h": 1, "predecessors": ["P4:4.7"], "children": []
+        },
+        {
+          "id": "S.6",
+          "title": "V2 Deep Learning dokumentieren",
+          "description": "Modellwahl, Training, Iterationszyklen, Ergebnisse.",
+          "duration_h": 6, "lag_h": 1, "predecessors": ["P5:5.6"], "children": []
+        },
+        {
+          "id": "S.7",
+          "title": "V3 Foundation Model dokumentieren",
+          "description": "Setup, Zero-Shot-Evaluation, Einordnung als Benchmark.",
+          "duration_h": 4, "lag_h": 1, "predecessors": ["P6:6.4"], "children": []
+        },
+        {
+          "id": "S.8",
+          "title": "Evaluation und Modellvergleich dokumentieren",
+          "description": "3-Klassen-Vergleich über alle Horizonte, statistische Signifikanz.",
+          "duration_h": 8, "lag_h": 1, "predecessors": ["P7:7.6"], "children": []
+        },
+        {
+          "id": "S.9",
+          "title": "Handlungsempfehlung für Watosoft AG",
+          "description": "Praktische Empfehlung: welches Modell wann, Kosten-Nutzen.",
+          "duration_h": 6, "lag_h": 1, "predecessors": ["P7:7.6"], "children": []
+        },
+        {
+          "id": "S.10",
+          "title": "Gesamtdokument überarbeiten und formatieren",
+          "description": "Roter Faden, Konsistenz, Formatierung.",
+          "duration_h": 10, "lag_h": 1, "predecessors": ["PS:S.1", "PS:S.2", "PS:S.3", "PS:S.4", "PS:S.5", "PS:S.6", "PS:S.7", "PS:S.8", "PS:S.9"], "children": []
+        },
+        {
+          "id": "S.11",
+          "title": "Abstract, Summary und Schlussfassung",
+          "description": "Zusammenfassung, was gefolgert werden kann und was nicht.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["PS:S.10"], "children": []
+        },
+        {
+          "id": "S.12",
+          "title": "Anhang: MLflow-Screenshots und Code",
+          "description": "Artefakte, Run-Übersichten, Code-Referenzen.",
+          "duration_h": 5, "lag_h": 1, "predecessors": ["PS:S.10"], "children": []
+        }
+      ]
+    }
+  ]
+}

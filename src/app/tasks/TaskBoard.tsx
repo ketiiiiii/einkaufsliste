@@ -2,6 +2,7 @@
 
 import {
   startTransition,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 
-type ColorToken = "amber" | "orange" | "emerald" | "teal" | "sky" | "indigo" | "rose" | "violet";
+type ColorToken = "amber" | "orange" | "emerald" | "teal" | "sky" | "indigo" | "rose" | "violet" | "mint";
 
 type Todo = { id: string; text: string; done: boolean };
 type Comment = { id: string; text: string; createdAt: string; image?: string };
@@ -39,6 +40,7 @@ export type TaskCard = {
   subBoard?: BoardState; // nested sub-board for drill-in
   productName?: string;
   variantLabel?: string;
+  assignee?: string; // Ressource / Person (für Resource Leveling)
 };
 
 export type TaskConnection = {
@@ -72,8 +74,8 @@ export type BoardState = {
 // Keep alias for compatibility
 type PersistedBoard = BoardState;
 
-const CARD_WIDTH = 224;
-const CARD_HEIGHT = 140;
+const CARD_WIDTH = 280;
+const CARD_HEIGHT = 148;
 const CARD_HALF_WIDTH = CARD_WIDTH / 2;
 const CARD_HALF_HEIGHT = CARD_HEIGHT / 2;
 const CARD_ANCHOR_INSET = 8;
@@ -94,9 +96,10 @@ const COLORS: Record<ColorToken, { bg: string; border: string; text: string; lab
   indigo:  { bg: "bg-indigo-50",  border: "border-indigo-200",  text: "text-indigo-900",  label: "Indigo" },
   rose:    { bg: "bg-rose-50",    border: "border-rose-200",    text: "text-rose-900",    label: "Rot" },
   violet:  { bg: "bg-violet-50",  border: "border-violet-200",  text: "text-violet-900",  label: "Lila" },
+  mint:    { bg: "bg-green-50",   border: "border-green-200",   text: "text-green-900",   label: "Mint" },
 };
 
-const paletteOrder: ColorToken[] = ["amber", "orange", "emerald", "teal", "sky", "indigo", "rose", "violet"];
+const paletteOrder: ColorToken[] = ["amber", "orange", "emerald", "teal", "sky", "indigo", "rose", "violet", "mint"];
 
 // --- Duration helpers ---
 const toHours = (duration: number, unit?: "h" | "d") =>
@@ -409,7 +412,7 @@ type CrossPickerState = {
 type TaskBoardProps = {
   initialState?: BoardState;
   onStateChange?: (state: BoardState) => void;
-  onDrillIn?: (taskId: string, taskTitle: string) => void;
+  onDrillIn?: (taskId: string, taskTitle: string, fromGantt?: boolean) => void;
   externalBoard?: BoardState | null;
   onExternalBoardConsumed?: () => void;
   /** "phase" = top-level phase board; "task" = task board inside a phase */
@@ -427,10 +430,16 @@ type TaskBoardProps = {
   breadcrumbSlot?: ReactNode;
   /** Variant-Slot — wird unterhalb der Projektkosten gerendert */
   variantSlot?: ReactNode;
+  /** When set, shows a "Zurück zum Gantt" button that calls this callback */
+  returnToGantt?: () => void;
+  /** Force initial view mode (e.g. to restore gantt fullscreen after back-navigation) */
+  initialView?: "board" | "table" | "gantt-fullscreen";
 };
 
-export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoard, onExternalBoardConsumed, level = "task", rootBoard, currentPhaseId, crossConnections, onCrossConnectionsChange, onNavigateToPhase, breadcrumbSlot, variantSlot }: TaskBoardProps = {}) {
+export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoard, onExternalBoardConsumed, level = "task", rootBoard, currentPhaseId, crossConnections, onCrossConnectionsChange, onNavigateToPhase, breadcrumbSlot, variantSlot, returnToGantt, initialView }: TaskBoardProps = {}) {
   const boardRef = useRef<HTMLDivElement | null>(null);
+  const scrollWrapRef = useRef<HTMLDivElement | null>(null);
+  const panRef = useRef<{ active: boolean; startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const dragRef = useRef<{
     id: string;
     pointerId: number;
@@ -449,7 +458,8 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
   const [draftNote, setDraftNote] = useState("");
   const [draftColor, setDraftColor] = useState<ColorToken>(paletteOrder[0]);
   const [linkSource, setLinkSource] = useState<string | null>(null);
-  const [view, setView] = useState<"board" | "table" | "gantt">("board");
+  const [view, setView] = useState<"board" | "table" | "gantt">(initialView === "gantt-fullscreen" ? "gantt" : (initialView ?? "board"));
+  const [ganttFullscreen, setGanttFullscreen] = useState(initialView === "gantt-fullscreen");
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [draftTodo, setDraftTodo] = useState("");
   const [draftComment, setDraftComment] = useState("");
@@ -460,6 +470,39 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
   const [editColor, setEditColor] = useState<ColorToken>(paletteOrder[0]);
   const [ganttAllLevels, setGanttAllLevels] = useState(false);
   const [expandedPhaseIds, setExpandedPhaseIds] = useState<Set<string>>(new Set());
+  const [soloMode, setSoloMode] = useState(true); // Resource Leveling: Solo-Modus (1 Person)
+
+  // Gantt inline editing state
+  const [ganttEditId, setGanttEditId] = useState<string | null>(null); // row id being edited (title)
+  const [ganttEditTitle, setGanttEditTitle] = useState("");
+  const [ganttEditDurId, setGanttEditDurId] = useState<string | null>(null); // row id being edited (duration)
+  const [ganttEditDur, setGanttEditDur] = useState("");
+  const [ganttEditUnit, setGanttEditUnit] = useState<"h" | "d">("h");
+  // Gantt description popover state
+  const [ganttDescPopover, setGanttDescPopover] = useState<{ rowId: string; x: number; y: number } | null>(null);
+  const [ganttDescEditId, setGanttDescEditId] = useState<string | null>(null);
+  const [ganttDescEditText, setGanttDescEditText] = useState("");
+  const ganttDescHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Gantt bar drag state
+  const ganttDragRef = useRef<{ rowId: string; startX: number; origES: number } | null>(null);
+  // Gantt selection highlight
+  const [ganttSelectedRowId, setGanttSelectedRowId] = useState<string | null>(null);
+  // Gantt hover states (gear icon + insert zone)
+  const [ganttHoverRowIdx, setGanttHoverRowIdx] = useState<number | null>(null);
+  const [ganttInsertHoverIdx, setGanttInsertHoverIdx] = useState<number | null>(null);
+
+  /** Update a task by gantt row id. Supports composite IDs like "P1:1.3" for subtasks. */
+  const ganttUpdateTask = useCallback((rowId: string, updater: (t: TaskCard) => TaskCard) => {
+    if (rowId.includes(':')) {
+      const [phaseId, subId] = rowId.split(':');
+      setTasks((prev) => prev.map((t) => {
+        if (t.id !== phaseId || !t.subBoard) return t;
+        return { ...t, subBoard: { ...t.subBoard, tasks: t.subBoard.tasks.map((st) => st.id === subId ? updater(st) : st) } };
+      }));
+    } else {
+      setTasks((prev) => prev.map((t) => t.id === rowId ? updater(t) : t));
+    }
+  }, []);
 
   // Load external board (from wizard)
   useEffect(() => {
@@ -718,6 +761,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             const DOT_COLORS: Record<string, string> = {
               amber: "#f59e0b", orange: "#f97316", emerald: "#10b981", teal: "#14b8a6",
               sky: "#0ea5e9", indigo: "#6366f1", rose: "#f43f5e", violet: "#8b5cf6",
+              mint: "#22c55e",
             };
             const isActive = draftColor === color;
             return (
@@ -787,17 +831,37 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             </span>
           </>
         )}
-        {view === "gantt" && level === "phase" && (
+        {view === "gantt" && tasks.some((t) => (t.subBoard?.tasks?.length ?? 0) > 0) && (
           <button
             type="button"
-            onClick={() => setGanttAllLevels((v) => !v)}
-            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition ${
-              ganttAllLevels
-                ? "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
-                : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
-            }`}
+            onClick={() => {
+              const allWithSubs = tasks.filter((t) => (t.subBoard?.tasks?.length ?? 0) > 0).map((t) => t.id);
+              const allExpanded = allWithSubs.every((id) => expandedPhaseIds.has(id));
+              setExpandedPhaseIds(allExpanded ? new Set() : new Set(allWithSubs));
+            }}
+            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
           >
-            {ganttAllLevels ? "⊟ Nur Phasen" : "⊞ Alle Ebenen"}
+            {tasks.some((t) => expandedPhaseIds.has(t.id)) ? "⊟ Einklappen" : "⊞ Alle Tasks"}
+          </button>
+        )}
+        {view === "gantt" && (
+          <button
+            type="button"
+            onClick={() => setSoloMode((p) => !p)}
+            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition ${soloMode ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"}`}
+            title="Resource Leveling: Solo-Modus (nur 1 Person arbeitet)"
+          >
+            👤 Solo-Modus
+          </button>
+        )}
+        {view === "gantt" && (
+          <button
+            type="button"
+            onClick={() => setGanttFullscreen(true)}
+            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
+            title="Vollansicht"
+          >
+            ⛶ Vollansicht
           </button>
         )}
         <button
@@ -848,6 +912,50 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
 
           {breadcrumbSlot}
 
+          {/* Zurück zum Gantt button — shown when navigated from Gantt view */}
+          {returnToGantt && (
+            <button
+              type="button"
+              onClick={returnToGantt}
+              className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 shadow-sm transition hover:bg-amber-100"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                <path d="M7.5 2L3.5 6L7.5 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Zurück zum Gantt
+            </button>
+          )}
+
+          <div
+            ref={scrollWrapRef}
+            className="overflow-auto rounded-3xl"
+            style={{ cursor: panRef.current?.active ? "grabbing" : "default", maxHeight: "calc(100vh - 200px)" }}
+            onPointerDown={(e) => {
+              // Mitteltaste (button=1) oder rechte Taste (button=2) → Pan-Modus
+              if (e.button !== 1 && e.button !== 2) return;
+              e.preventDefault();
+              const wrap = scrollWrapRef.current;
+              if (!wrap) return;
+              panRef.current = { active: true, startX: e.clientX, startY: e.clientY, scrollLeft: wrap.scrollLeft, scrollTop: wrap.scrollTop };
+              wrap.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              const pan = panRef.current;
+              if (!pan?.active) return;
+              const wrap = scrollWrapRef.current;
+              if (!wrap) return;
+              wrap.scrollLeft = pan.scrollLeft - (e.clientX - pan.startX);
+              wrap.scrollTop = pan.scrollTop - (e.clientY - pan.startY);
+            }}
+            onPointerUp={(e) => {
+              if (panRef.current?.active) panRef.current = null;
+            }}
+            onContextMenu={(e) => {
+              // Rechtsklick-Kontextmenü unterdrücken wenn Pan aktiv war
+              if (!panRef.current) return;
+              e.preventDefault();
+            }}
+          >
           <div
             ref={boardRef}
             className="relative rounded-3xl border border-zinc-200 bg-gradient-to-br from-zinc-50 via-white to-zinc-100 p-4 shadow-inner"
@@ -873,30 +981,46 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               </defs>
               {connectionLines.map((line) => {
                 const isCritical = criticalPath.criticalConnectionIds.has(line.id);
-                const isLoop = backEdgeIds.has(line.id) || cycleEdgeIds.has(line.id);
+                const isBackEdge = backEdgeIds.has(line.id);
+                const isCycleEdge = cycleEdgeIds.has(line.id);
+                const isLoop = isBackEdge || isCycleEdge;
+
+                if (isBackEdge) {
+                  // Curved arc for back-edges — visually distinct loop-back arrow (routes below)
+                  const midX = (line.x1 + line.x2) / 2;
+                  const midY = (line.y1 + line.y2) / 2;
+                  const dist = Math.sqrt((line.x2 - line.x1) ** 2 + (line.y2 - line.y1) ** 2);
+                  const downOffset = Math.min(dist * 0.45, 140);
+                  const cpX = midX;
+                  const cpY = midY + downOffset;
+                  const d = `M ${line.x1},${line.y1} Q ${cpX},${cpY} ${line.x2},${line.y2}`;
+                  const conn = connections.find((c) => c.id === line.id);
+                  const loopLabel = conn?.loopDuration
+                    ? `↺ ${fmtDuration(toHours(conn.loopDuration, conn.loopDurationUnit as "h" | "d" ?? "h"))}`
+                    : "↺";
+                  return (
+                    <g key={line.id}>
+                      <path d={d} fill="none" stroke="#8b5cf6" strokeWidth={2.5} strokeDasharray="7 4"
+                        markerEnd="url(#arrowhead-loop)" strokeLinejoin="round" />
+                      <text x={cpX} y={cpY + 14} textAnchor="middle" fontSize={11} fontWeight="700"
+                        fill="#8b5cf6" className="select-none pointer-events-none">
+                        {loopLabel}
+                      </text>
+                    </g>
+                  );
+                }
+
                 return (
                   <g key={line.id}>
                     <line
-                      x1={line.x1}
-                      y1={line.y1}
-                      x2={line.x2}
-                      y2={line.y2}
-                      stroke={isLoop ? "#8b5cf6" : isCritical ? "#f97316" : "#a1a1aa"}
+                      x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
+                      stroke={isCycleEdge ? "#8b5cf6" : isCritical ? "#f97316" : "#a1a1aa"}
                       strokeWidth={isCritical ? 2.5 : 2}
-                      strokeDasharray={isLoop ? "5 3" : undefined}
+                      strokeDasharray={isCycleEdge ? "5 3" : undefined}
                       strokeLinecap="round"
                       markerEnd={isLoop ? "url(#arrowhead-loop)" : isCritical ? "url(#arrowhead-critical)" : "url(#arrowhead)"}
                       className="mix-blend-multiply"
                     />
-                    {isLoop && (() => {
-                      const mx = (line.x1 + line.x2) / 2;
-                      const my = (line.y1 + line.y2) / 2;
-                      return (
-                        <text x={mx} y={my - 5} textAnchor="middle" fontSize={10} fontWeight="700" fill="#8b5cf6" className="select-none pointer-events-none">
-                          ↺
-                        </text>
-                      );
-                    })()}
                   </g>
                 );
               })}
@@ -914,14 +1038,12 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                   {/* Stapel-Effekt: Schattenebenen für iterative Kacheln */}
                   {isIterative && (
                     <>
-                      <div className={`absolute w-[240px] rounded-2xl border ${color.border} ${color.bg} opacity-40`} style={{ top: 8, left: 8, height: CARD_HEIGHT }} aria-hidden />
-                      {iters >= 3 && <div className={`absolute w-[240px] rounded-2xl border ${color.border} ${color.bg} opacity-25`} style={{ top: 16, left: 16, height: CARD_HEIGHT }} aria-hidden />}
+                      <div className={`absolute w-[288px] rounded-2xl border ${color.border} ${color.bg} opacity-40`} style={{ top: 8, left: 8, height: CARD_HEIGHT }} aria-hidden />
+                      {iters >= 3 && <div className={`absolute w-[288px] rounded-2xl border ${color.border} ${color.bg} opacity-25`} style={{ top: 16, left: 16, height: CARD_HEIGHT }} aria-hidden />}
                     </>
                   )}
                 <article
-                  className={`relative w-[240px] rounded-2xl border p-3 text-sm shadow-md transition-shadow ${color.bg} ${color.border} ${color.text} ${
-                    level === "phase" ? "cursor-pointer" : "cursor-grab"
-                  } ${
+                  className={`relative w-[280px] rounded-2xl border p-3 text-sm shadow-md transition-shadow ${color.bg} ${color.border} ${color.text} ${
                     linkSource === task.id
                       ? "ring-2 ring-zinc-900"
                       : criticalPath.criticalTaskIds.has(task.id)
@@ -931,15 +1053,15 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                   onPointerDown={(event) => handlePointerDown(task.id, event)}
                   onClick={() => handleCardClick(task.id)}
                 >
-                  <div className="flex items-start justify-between gap-1">
-                    <div className="min-w-0 flex-1">
-                      <h3 className="break-words text-sm font-semibold leading-snug line-clamp-2">{task.title}</h3>
-                      {isIterative && (
-                        <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-black/[0.09] px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide">
-                          ↺ {iters}× iterativ
-                        </span>
-                      )}
-                    </div>
+                  {/* Titel — ganz oben, eigene Zeile */}
+                  <h3 className={`mb-1.5 break-words text-sm font-semibold leading-snug ${level === "phase" ? "cursor-pointer" : "cursor-grab"}`}>{task.title}</h3>
+                  {isIterative && (
+                    <span className="mb-1 inline-flex items-center gap-1 rounded-full bg-black/[0.09] px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide">
+                      ↺ {iters}× iterativ
+                    </span>
+                  )}
+                  {/* Aktions-Buttons — eigene Zeile */}
+                  <div className="flex items-center gap-0.5">
                     <div className="flex shrink-0 items-center gap-0.5">
                       <button
                         type="button"
@@ -989,7 +1111,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                       </button>
                     </div>
                   </div>
-                  {task.note ? <p className="mt-1 text-xs text-zinc-600">{task.note}</p> : null}
+                  {task.note ? <p className="mt-1.5 text-xs text-zinc-600">{task.note}</p> : null}
                   {level === "phase" && (task.productName || task.variantLabel) && (
                     <div className="mt-1 flex flex-wrap gap-1">
                       {task.productName && (
@@ -1096,8 +1218,8 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                       </>
                     );
                   })()}
-                  {/* Inline task list (phase level only) */}
-                  {level === "phase" && (task.subBoard?.tasks?.length ?? 0) > 0 && (
+                  {/* Inline subtask list */}
+                  {(task.subBoard?.tasks?.length ?? 0) > 0 && (
                     <div className="mt-2" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
                       <button
                         type="button"
@@ -1212,6 +1334,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               ));
             })()}
           </div>
+          </div>{/* end scrollWrapRef */}
 
           {connections.length ? (
             <section className="rounded-2xl border border-zinc-200 bg-white p-3 text-sm text-zinc-700 sm:p-4">
@@ -1442,17 +1565,17 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         </div>
       )}
 
-      {/* Gantt view */}
-      {view === "gantt" && (() => {
+      {/* Gantt view — renders inline or inside fullscreen overlay */}
+      {(view === "gantt" || ganttFullscreen) && (() => {
         if (tasks.length === 0) {
-          return (
+          return ganttFullscreen ? null : (
             <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-zinc-200 text-sm text-zinc-400">
               Noch keine Tasks angelegt.
             </div>
           );
         }
         const ROW_H = 36;
-        const LABEL_W = 180;
+        const LABEL_W = 300;
         const HR_W = 18; // pixels per hour
         const HEADER_H = 40;
         const PAD = 12;
@@ -1528,89 +1651,788 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             }
           }
         }
+        // Re-propagate phase-level: after loop shifts, enforce ES >= max(pred EF + lag)
+        if (!criticalPath.hasCycle && criticalPath.topoOrder.length > 0) {
+          const _phConnLookup = new Map<string, TaskConnection>();
+          for (const fc of forwardConnections) _phConnLookup.set(`${fc.from}:${fc.to}`, fc);
+          const _phPreds = new Map<string, string[]>();
+          for (const t of tasks) _phPreds.set(t.id, []);
+          for (const fc of forwardConnections) {
+            const s = new Set(tasks.map((t) => t.id));
+            if (s.has(fc.from) && s.has(fc.to)) _phPreds.get(fc.to)!.push(fc.from);
+          }
+          for (const id of criticalPath.topoOrder) {
+            const preds = _phPreds.get(id) ?? [];
+            if (preds.length === 0) continue;
+            const minES = Math.max(...preds.map((p) => {
+              const conn = _phConnLookup.get(`${p}:${id}`);
+              return (efMap.get(p) ?? 0) + lagToHours(conn?.lag, conn?.lagUnit);
+            }));
+            const curES = esMap.get(id) ?? 0;
+            if (minES > curES) {
+              const t = tasks.find((t) => t.id === id)!;
+              esMap.set(id, minES);
+              efMap.set(id, minES + effectiveHours(t));
+            }
+          }
+        }
 
-        // Sort tasks by topological (process flow) order, fall back to ES
-        const topoIdx = new Map(criticalPath.topoOrder.map((id, i) => [id, i]));
-        const sortedGanttTasks = [...tasks].sort((a, b) => {
-          const ta = topoIdx.has(a.id) ? topoIdx.get(a.id)! : 9999;
-          const tb = topoIdx.has(b.id) ? topoIdx.get(b.id)! : 9999;
-          if (ta !== tb) return ta - tb;
-          return (esMap.get(a.id) ?? 0) - (esMap.get(b.id) ?? 0);
-        });
-
-        // Build flat gantt rows (optionally including sub-tasks of phases)
-        type GanttRow = { id: string; title: string; color: ColorToken; duration: number; unit?: "h" | "d"; iterations?: number; indent: number; absoluteES: number; absoluteEF: number; isCritical: boolean; };
-        let ganttRows: GanttRow[];
-        if (ganttAllLevels && level === "phase") {
-          ganttRows = [];
-          for (const phase of sortedGanttTasks) {
-            const phaseES = esMap.get(phase.id) ?? 0;
-            const phaseEF = efMap.get(phase.id) ?? phaseES + effectiveHours(phase);
-            ganttRows.push({ id: phase.id, title: phase.title, color: phase.color, duration: phase.duration ?? 1, unit: phase.unit, iterations: phase.iterations, indent: 0, absoluteES: phaseES, absoluteEF: phaseEF, isCritical: criticalPath.criticalTaskIds.has(phase.id) });
-            if (phase.subBoard?.tasks?.length) {
-              const subCPM = computeCriticalPath(phase.subBoard.tasks, phase.subBoard.connections ?? []);
-              const subES = new Map<string, number>();
-              const subEF = new Map<string, number>();
-              if (!subCPM.hasCycle && subCPM.ES.size > 0) {
-                for (const st of phase.subBoard.tasks) { subES.set(st.id, subCPM.ES.get(st.id) ?? 0); subEF.set(st.id, subCPM.EF.get(st.id) ?? 0); }
-              } else {
-                let cur = 0;
-                for (const st of phase.subBoard.tasks) { const d = effectiveHours(st); subES.set(st.id, cur); subEF.set(st.id, cur + d); cur += d; }
-              }
-              const sortedSubs = [...phase.subBoard.tasks].sort((a, b) => (subES.get(a.id) ?? 0) - (subES.get(b.id) ?? 0));
-              for (const st of sortedSubs) {
-                ganttRows.push({ id: `${phase.id}:${st.id}`, title: st.title, color: st.color, duration: st.duration ?? 1, unit: st.unit, iterations: st.iterations, indent: 1, absoluteES: phaseES + (subES.get(st.id) ?? 0), absoluteEF: phaseES + (subEF.get(st.id) ?? effectiveHours(st)), isCritical: subCPM.criticalTaskIds.has(st.id) });
+        // ── Global flat CPM across ALL sub-tasks (cross-phase aware) ──────
+        const _flatTasks: TaskCard[] = [];
+        const _flatConns: TaskConnection[] = [];
+        for (const ph of tasks) {
+          if (!ph.subBoard?.tasks?.length) continue;
+          for (const st of ph.subBoard.tasks) _flatTasks.push({ ...st, id: `${ph.id}:${st.id}` });
+          for (const c of (ph.subBoard.connections ?? []))
+            _flatConns.push({ ...c, id: `_s_${ph.id}:${c.id}`, from: `${ph.id}:${c.from}`, to: `${ph.id}:${c.to}` });
+        }
+        // Cross-phase task-to-task connections from root board
+        for (const c of connections) {
+          if (c.from.includes(':') && c.to.includes(':')) _flatConns.push(c);
+        }
+        // Also include crossConnections (e.g. manually-added phases like Meetings)
+        for (const cc of (crossConnections ?? [])) {
+          const cid = `${cc.fromPhaseId}:${cc.fromTaskId}`;
+          const tid = `${cc.toPhaseId}:${cc.toTaskId}`;
+          // Avoid duplicates if already present as composite-ID connection
+          if (!_flatConns.some((fc) => fc.from === cid && fc.to === tid)) {
+            _flatConns.push({ id: cc.id, from: cid, to: tid });
+          }
+        }
+        // Translate phase-level connections into subtask-level virtual edges:
+        // exitTasks(A) → entryTasks(B) for every phase connection A→B
+        for (const c of connections) {
+          if (c.from.includes(':') || c.to.includes(':')) continue; // only phase-level
+          const phFrom = tasks.find((t) => t.id === c.from);
+          const phTo = tasks.find((t) => t.id === c.to);
+          if (!phFrom?.subBoard?.tasks?.length || !phTo?.subBoard?.tasks?.length) continue;
+          // Exit tasks: subtasks with no outgoing internal forward connection
+          const intFromIds = new Set(phFrom.subBoard.tasks.map((t) => t.id));
+          const intFromConns = (phFrom.subBoard.connections ?? []).filter((ic) => intFromIds.has(ic.from) && intFromIds.has(ic.to));
+          const intFromBackIds = findBackEdges(phFrom.subBoard.tasks, intFromConns);
+          const hasOutgoing = new Set(intFromConns.filter((ic) => !intFromBackIds.has(ic.id)).map((ic) => ic.from));
+          const exitTasks = phFrom.subBoard.tasks.filter((t) => !hasOutgoing.has(t.id));
+          // Entry tasks: subtasks with no incoming internal forward connection
+          const intToIds = new Set(phTo.subBoard.tasks.map((t) => t.id));
+          const intToConns = (phTo.subBoard.connections ?? []).filter((ic) => intToIds.has(ic.from) && intToIds.has(ic.to));
+          const intToBackIds = findBackEdges(phTo.subBoard.tasks, intToConns);
+          const hasIncoming = new Set(intToConns.filter((ic) => !intToBackIds.has(ic.id)).map((ic) => ic.to));
+          const entryTasks = phTo.subBoard.tasks.filter((t) => !hasIncoming.has(t.id));
+          for (const ex of exitTasks) {
+            for (const en of entryTasks) {
+              const vFrom = `${c.from}:${ex.id}`;
+              const vTo = `${c.to}:${en.id}`;
+              if (!_flatConns.some((fc) => fc.from === vFrom && fc.to === vTo)) {
+                _flatConns.push({ id: `_vp_${vFrom}_${vTo}`, from: vFrom, to: vTo, lag: c.lag, lagUnit: c.lagUnit });
               }
             }
           }
+        }
+        const _flatBackIds = findBackEdges(_flatTasks, _flatConns);
+        const _flatFwd = _flatConns.filter((c) => !_flatBackIds.has(c.id));
+        const _flatCPM = computeCriticalPath(_flatTasks, _flatFwd);
+        const globalSubES = new Map<string, number>();
+        const globalSubEF = new Map<string, number>();
+        if (!_flatCPM.hasCycle && _flatCPM.ES.size > 0) {
+          for (const t of _flatTasks) {
+            globalSubES.set(t.id, _flatCPM.ES.get(t.id) ?? 0);
+            globalSubEF.set(t.id, _flatCPM.EF.get(t.id) ?? 0);
+          }
         } else {
-          ganttRows = sortedGanttTasks.map((t) => ({ id: t.id, title: t.title, color: t.color, duration: t.duration ?? 1, unit: t.unit, iterations: t.iterations, indent: 0, absoluteES: esMap.get(t.id) ?? 0, absoluteEF: efMap.get(t.id) ?? (esMap.get(t.id) ?? 0) + effectiveHours(t), isCritical: criticalPath.criticalTaskIds.has(t.id) }));
+          let _cur = 0;
+          for (const t of _flatTasks) { const d = effectiveHours(t); globalSubES.set(t.id, _cur); globalSubEF.set(t.id, _cur + d); _cur += d; }
+        }
+        // Apply loop duration adjustments on flat model
+        for (const c of _flatConns) {
+          if (!_flatBackIds.has(c.id) || !c.loopDuration) continue;
+          const loopH = toHours(c.loopDuration, c.loopDurationUnit ?? "h");
+          const entryES2 = globalSubES.get(c.to) ?? 0;
+          const loopDL = entryES2 + loopH;
+          const _fAdj = new Map<string, string[]>();
+          for (const t of _flatTasks) _fAdj.set(t.id, []);
+          for (const fc of _flatFwd) _fAdj.get(fc.from)?.push(fc.to);
+          const _rfe = new Set<string>();
+          const _stk: string[] = [c.to];
+          while (_stk.length) { const n = _stk.pop()!; if (_rfe.has(n)) continue; _rfe.add(n); for (const nb of _fAdj.get(n) ?? []) _stk.push(nb); }
+          const _ln = new Set<string>();
+          const _cre = (node: string, vis: Set<string>): boolean => {
+            if (node === c.from) return true;
+            if (vis.has(node)) return false; vis.add(node);
+            return (_fAdj.get(node) ?? []).some((nb) => _cre(nb, vis));
+          };
+          for (const n of _rfe) { if (_cre(n, new Set())) _ln.add(n); }
+          for (const t of _flatTasks) {
+            if (_ln.has(t.id)) continue;
+            const cur = globalSubES.get(t.id) ?? 0;
+            if (cur >= entryES2 && cur < loopDL) {
+              globalSubES.set(t.id, loopDL);
+              globalSubEF.set(t.id, loopDL + effectiveHours(t));
+            }
+          }
+        }
+        // Re-propagate: after loop shifts some tasks may violate predecessor constraints.
+        // Walk forward edges in topo order and enforce ES >= max(pred EF + lag).
+        if (!_flatCPM.hasCycle && _flatCPM.topoOrder.length > 0) {
+          const _fwdConnLookup = new Map<string, { lag?: number; lagUnit?: string }>();
+          for (const fc of _flatFwd) _fwdConnLookup.set(`${fc.from}:${fc.to}`, fc);
+          const _fwdPreds = new Map<string, string[]>();
+          for (const t of _flatTasks) _fwdPreds.set(t.id, []);
+          for (const fc of _flatFwd) {
+            const s = new Set(_flatTasks.map((t) => t.id));
+            if (s.has(fc.from) && s.has(fc.to)) _fwdPreds.get(fc.to)!.push(fc.from);
+          }
+          for (const id of _flatCPM.topoOrder) {
+            const preds = _fwdPreds.get(id) ?? [];
+            if (preds.length === 0) continue;
+            const minES = Math.max(...preds.map((p) => {
+              const conn = _fwdConnLookup.get(`${p}:${id}`);
+              return (globalSubEF.get(p) ?? 0) + lagToHours(conn?.lag, conn?.lagUnit);
+            }));
+            const curES = globalSubES.get(id) ?? 0;
+            if (minES > curES) {
+              const t = _flatTasks.find((t) => t.id === id)!;
+              globalSubES.set(id, minES);
+              globalSubEF.set(id, minES + effectiveHours(t));
+            }
+          }
+        }
+
+        // ── Resource Leveling (Solo-Modus) ────────────────────────────────
+        // When soloMode is active, tasks on the same resource cannot overlap.
+        // We use priority-based scheduling: always pick the task with the
+        // earliest CPM-ES whose predecessors are all finished (= "ready queue").
+        if (soloMode && _flatTasks.length > 0) {
+          // Build predecessor and successor lookup
+          const _lvPreds = new Map<string, Set<string>>();
+          const _lvSuccs = new Map<string, string[]>();
+          const _lvConnLookup = new Map<string, { lag?: number; lagUnit?: string }>();
+          for (const t of _flatTasks) { _lvPreds.set(t.id, new Set()); _lvSuccs.set(t.id, []); }
+          const _flatIds = new Set(_flatTasks.map((t) => t.id));
+          for (const fc of _flatFwd) {
+            if (_flatIds.has(fc.from) && _flatIds.has(fc.to)) {
+              _lvPreds.get(fc.to)!.add(fc.from);
+              _lvSuccs.get(fc.from)!.push(fc.to);
+              _lvConnLookup.set(`${fc.from}:${fc.to}`, fc);
+            }
+          }
+          // Priority queue: tasks sorted by CPM-ES (earliest-ready first)
+          const _origES = new Map<string, number>();
+          for (const t of _flatTasks) _origES.set(t.id, globalSubES.get(t.id) ?? 0);
+          const readyQueue: string[] = [];
+          const scheduled = new Set<string>();
+          const remainingPreds = new Map<string, number>();
+          for (const t of _flatTasks) remainingPreds.set(t.id, _lvPreds.get(t.id)!.size);
+          // Seed with tasks that have no predecessors
+          for (const t of _flatTasks) {
+            if (remainingPreds.get(t.id) === 0) readyQueue.push(t.id);
+          }
+          // Sort ready queue by original CPM-ES (ascending) so earliest-available task runs first
+          readyQueue.sort((a, b) => (_origES.get(a) ?? 0) - (_origES.get(b) ?? 0));
+          let resourceFreeAt = 0;
+          let lastPhase = ""; // Track last scheduled phase for affinity
+          const phaseOf = (cid: string) => cid.includes(':') ? cid.split(':')[0] : cid;
+          while (readyQueue.length > 0) {
+            // Compute effective ES for each candidate
+            const candidates: { idx: number; effES: number; phase: string }[] = [];
+            for (let qi = 0; qi < readyQueue.length; qi++) {
+              const cid = readyQueue[qi];
+              const cpmES = _origES.get(cid) ?? 0;
+              let effES = Math.max(cpmES, resourceFreeAt);
+              for (const p of _lvPreds.get(cid) ?? []) {
+                const conn = _lvConnLookup.get(`${p}:${cid}`);
+                effES = Math.max(effES, (globalSubEF.get(p) ?? 0) + lagToHours(conn?.lag, conn?.lagUnit));
+              }
+              candidates.push({ idx: qi, effES, phase: phaseOf(cid) });
+            }
+            // Sort: earliest effES first, then phase affinity (same phase as last → priority)
+            candidates.sort((a, b) => {
+              if (a.effES !== b.effES) return a.effES - b.effES;
+              // Tiebreaker: prefer same phase as last scheduled task
+              const aAff = a.phase === lastPhase ? 0 : 1;
+              const bAff = b.phase === lastPhase ? 0 : 1;
+              return aAff - bAff;
+            });
+            const best = candidates[0];
+            const id = readyQueue.splice(best.idx, 1)[0];
+            scheduled.add(id);
+            lastPhase = phaseOf(id);
+            const t = _flatTasks.find((t) => t.id === id);
+            if (!t) continue;
+            const dur = effectiveHours(t);
+            globalSubES.set(id, best.effES);
+            globalSubEF.set(id, best.effES + dur);
+            resourceFreeAt = best.effES + dur;
+            // Unlock successors
+            for (const s of _lvSuccs.get(id) ?? []) {
+              remainingPreds.set(s, (remainingPreds.get(s) ?? 1) - 1);
+              if (remainingPreds.get(s) === 0 && !scheduled.has(s)) {
+                readyQueue.push(s);
+              }
+            }
+          }
+        }
+
+        // Phase-level ES/EF derived from their sub-tasks
+        const phaseAbsES = new Map<string, number>();
+        const phaseAbsEF = new Map<string, number>();
+        for (const ph of tasks) {
+          if (ph.subBoard?.tasks?.length) {
+            let minE = Infinity, maxE = 0;
+            for (const st of ph.subBoard.tasks) {
+              const cid = `${ph.id}:${st.id}`;
+              minE = Math.min(minE, globalSubES.get(cid) ?? 0);
+              maxE = Math.max(maxE, globalSubEF.get(cid) ?? 0);
+            }
+            phaseAbsES.set(ph.id, minE === Infinity ? 0 : minE);
+            phaseAbsEF.set(ph.id, maxE);
+          } else {
+            phaseAbsES.set(ph.id, esMap.get(ph.id) ?? 0);
+            phaseAbsEF.set(ph.id, efMap.get(ph.id) ?? effectiveHours(ph));
+          }
+        }
+
+        // Sort phases by absoluteES
+        const sortedGanttTasks = [...tasks].sort((a, b) =>
+          (phaseAbsES.get(a.id) ?? 0) - (phaseAbsES.get(b.id) ?? 0)
+        );
+
+        // Build gantt rows using global positions
+        type GanttRow = { id: string; title: string; note?: string; color: ColorToken; duration: number; unit?: "h" | "d"; iterations?: number; indent: number; absoluteES: number; absoluteEF: number; isCritical: boolean; hasSubTasks: boolean; assignee?: string; };
+        const ganttRows: GanttRow[] = [];
+        for (const task of sortedGanttTasks) {
+          const taskES = phaseAbsES.get(task.id) ?? 0;
+          const taskEF = phaseAbsEF.get(task.id) ?? taskES + effectiveHours(task);
+          const hasSubTasks = (task.subBoard?.tasks?.length ?? 0) > 0;
+          ganttRows.push({ id: task.id, title: task.title, note: task.note, color: task.color, duration: task.duration ?? 1, unit: task.unit, iterations: task.iterations, indent: 0, absoluteES: taskES, absoluteEF: taskEF, isCritical: criticalPath.criticalTaskIds.has(task.id), hasSubTasks, assignee: task.assignee });
+          if (hasSubTasks && expandedPhaseIds.has(task.id)) {
+            const sortedSubs = [...task.subBoard!.tasks].sort((a, b) =>
+              (globalSubES.get(`${task.id}:${a.id}`) ?? 0) - (globalSubES.get(`${task.id}:${b.id}`) ?? 0)
+            );
+            for (const st of sortedSubs) {
+              const cid = `${task.id}:${st.id}`;
+              ganttRows.push({ id: cid, title: st.title, note: st.note, color: st.color, duration: st.duration ?? 1, unit: st.unit, iterations: st.iterations, indent: 1, absoluteES: globalSubES.get(cid) ?? 0, absoluteEF: globalSubEF.get(cid) ?? effectiveHours(st), isCritical: _flatCPM.criticalTaskIds.has(cid), hasSubTasks: false, assignee: st.assignee });
+            }
+          }
         }
 
         const maxHours = Math.max(...ganttRows.map((r) => r.absoluteEF), 1);
         const svgW = LABEL_W + maxHours * HR_W + PAD * 2;
         const svgH = HEADER_H + ganttRows.length * ROW_H + PAD;
 
+        // Collect visible sub-board connections + cross-phase connections (remapped to composite IDs)
+        type GanttConn = { id: string; from: string; to: string; lag?: number; lagUnit?: string; loopDuration?: number; loopDurationUnit?: string; isSubConn?: boolean; };
+        const ganttSubConns: GanttConn[] = [];
+        for (const task of sortedGanttTasks) {
+          if ((task.subBoard?.tasks?.length ?? 0) > 0 && expandedPhaseIds.has(task.id)) {
+            for (const c of (task.subBoard!.connections ?? [])) {
+              ganttSubConns.push({ ...c, id: `${task.id}:${c.id}`, from: `${task.id}:${c.from}`, to: `${task.id}:${c.to}`, isSubConn: true });
+            }
+          }
+        }
+        // Cross-phase task-level connections (show when both phases expanded)
+        for (const c of connections) {
+          if (!c.from.includes(':') || !c.to.includes(':')) continue;
+          const fp = c.from.split(':')[0], tp = c.to.split(':')[0];
+          if (expandedPhaseIds.has(fp) && expandedPhaseIds.has(tp)) {
+            ganttSubConns.push({ ...c, isSubConn: true });
+          }
+        }
+        // Also include crossConnections (e.g. manually-added phases like Meetings)
+        for (const cc of (crossConnections ?? [])) {
+          const fromId = `${cc.fromPhaseId}:${cc.fromTaskId}`;
+          const toId = `${cc.toPhaseId}:${cc.toTaskId}`;
+          if (expandedPhaseIds.has(cc.fromPhaseId) && expandedPhaseIds.has(cc.toPhaseId)) {
+            if (!ganttSubConns.some((gc) => gc.from === fromId && gc.to === toId)) {
+              ganttSubConns.push({ id: cc.id, from: fromId, to: toId, isSubConn: true });
+            }
+          }
+        }
+
         const GANTT_COLORS: Record<string, string> = {
           amber: "#fbbf24", sky: "#38bdf8", rose: "#fb7185",
           emerald: "#34d399", violet: "#a78bfa", zinc: "#a1a1aa",
           orange: "#fb923c", teal: "#2dd4bf", indigo: "#818cf8",
+          mint: "#86efac",
         };
 
         // Row index by id (for dependency arrows)
         const rowIndex = new Map(ganttRows.map((r, i) => [r.id, i]));
+        const svgTimeW = maxHours * HR_W + PAD * 2; // width of the scrollable time area
 
         // Build tick marks: every 8h = 1 day; also every 1h if total ≤ 24h
         const dayTicks: number[] = [];
         for (let h = 0; h <= maxHours; h += HOURS_PER_DAY) dayTicks.push(h);
         const showHourTicks = maxHours <= 48;
 
-        return (
-          <div className="overflow-x-auto rounded-xl border border-zinc-100 bg-white shadow-sm">
+        // ── Arrow routing ─────────────────────────────────────────────────
+        // Rules:
+        // 1. Arrow enters target bar always from LEFT
+        // 2. Avoid crossing SOURCE and TARGET bars (intermediate bars OK)
+        // 3. Adjacent parallel lines spaced apart
+        // 4. Arrow color = target task color; same-color arrows may overlap, different colors are separated
+        type _ArrowR = { id: string; from: string; to: string; path: string; color: string; marker: string; w: number; dash?: string; lagLabel?: { text: string; x: number; y: number; color: string }; };
+
+        const _BAR_PAD = 6;
+        const _CHAN_SPC = 8;
+        const _usedArrowColors = new Set<string>();
+
+        // Bar pixel extents per gantt row
+        const _barPx = ganttRows.map((r) => ({
+          l: r.absoluteES * HR_W + 2,
+          r: r.absoluteEF * HR_W - 2,
+        }));
+
+        // Channel overlap tracking — prevents parallel vertical segments (same color may share)
+        const _usedV: { x: number; minR: number; maxR: number; color?: string }[] = [];
+
+        /** Find vertical channel searching RIGHT.
+         *  barRows: only these rows are checked for bar collision (source + target).
+         *  minR/maxR: full row range for channel overlap prevention.
+         *  color: arrow color — same color may share channels. */
+        const _findChanRight = (startX: number, barRows: number[], minR: number, maxR: number, color?: string): number => {
+          let x = startX;
+          for (let pass = 0; pass < 80; pass++) {
+            let blocked = false;
+            for (const r of barRows) {
+              if (x >= _barPx[r].l - _BAR_PAD && x <= _barPx[r].r + _BAR_PAD) {
+                x = _barPx[r].r + _BAR_PAD + 4;
+                blocked = true; break;
+              }
+            }
+            if (blocked) continue;
+            const ov = _usedV.find((ch) => Math.abs(ch.x - x) < _CHAN_SPC && ch.minR <= maxR && ch.maxR >= minR && ch.color !== color);
+            if (ov) { x = ov.x + _CHAN_SPC; continue; }
+            break;
+          }
+          _usedV.push({ x, minR, maxR, color });
+          return x;
+        };
+
+        /** Find vertical channel searching LEFT.
+         *  barRows: only these rows are checked for bar collision.
+         *  minR/maxR: full row range for channel overlap prevention.
+         *  color: arrow color — same color may share channels. */
+        const _findChanLeft = (startX: number, barRows: number[], minR: number, maxR: number, color?: string): number => {
+          let x = startX;
+          for (let pass = 0; pass < 80; pass++) {
+            let blocked = false;
+            for (const r of barRows) {
+              if (x >= _barPx[r].l - _BAR_PAD && x <= _barPx[r].r + _BAR_PAD) {
+                x = _barPx[r].l - _BAR_PAD - 4;
+                blocked = true; break;
+              }
+            }
+            if (blocked) { if (x < 4) break; continue; }
+            const ov = _usedV.find((ch) => Math.abs(ch.x - x) < _CHAN_SPC && ch.minR <= maxR && ch.maxR >= minR && ch.color !== color);
+            if (ov) { x -= _CHAN_SPC; if (x < 4) break; continue; }
+            break;
+          }
+          x = Math.max(x, 4);
+          _usedV.push({ x, minR, maxR, color });
+          return x;
+        };
+
+        /** Route forward arrow from row fi → row ti.
+         *  3-segment for forward deps, 4-segment for overlaps.
+         *  color: used for channel sharing (same color may overlap). */
+        const _routeFwd = (fi: number, ti: number, color?: string): string => {
+          const srcX = _barPx[fi].r + 2;
+          const dstX = _barPx[ti].l - 2;
+          const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
+          const dstY = HEADER_H + ti * ROW_H + ROW_H / 2;
+
+          if (fi === ti) return `M ${srcX},${srcY} H ${dstX}`;
+
+          const minR = Math.min(fi, ti), maxR = Math.max(fi, ti);
+          const goDown = fi < ti;
+
+          // Forward: target starts clearly after source ends → 3-segment
+          if (dstX > srcX + 8) {
+            // Only check SOURCE bar for collision — vertical is left of target bar
+            let chanX = _findChanRight(srcX + 4, [fi], minR, maxR, color);
+            // Clamp: keep vertical between source and target
+            if (chanX > dstX - 4) {
+              _usedV.pop();
+              chanX = (srcX + dstX) / 2;
+              _usedV.push({ x: chanX, minR, maxR, color });
+            }
+            return `M ${srcX},${srcY} H ${chanX} V ${dstY} H ${dstX}`;
+          }
+
+          // Overlap/tight: 4-segment approach from left of target only
+          // vertical drop → gutter → approach left of target → right into target
+          const gutterY = goDown
+            ? HEADER_H + (fi + 1) * ROW_H - 2
+            : HEADER_H + fi * ROW_H + 2;
+          const approachX = _findChanLeft(dstX - 8, [ti], minR, maxR, color);
+          return `M ${srcX},${srcY} V ${gutterY} H ${approachX} V ${dstY} H ${dstX}`;
+        };
+
+        // ── Build arrow routes ──
+        // Phase-level arrows: HIDE when either endpoint's PHASE is expanded
+        const _expandedIds = expandedPhaseIds;
+        const _phaseOf = (id: string) => id.includes(':') ? id.split(':')[0] : id;
+        const _fwdRoutes: _ArrowR[] = [];
+        for (const c of forwardConnections) {
+          // Skip connections when their phase is expanded (subtask arrows replace them)
+          if (_expandedIds.has(_phaseOf(c.from)) || _expandedIds.has(_phaseOf(c.to))) continue;
+          const fi = rowIndex.get(c.from), ti = rowIndex.get(c.to);
+          if (fi === undefined || ti === undefined) continue;
+          const isLoop = cycleEdgeIds.has(c.id);
+          const targetColor = GANTT_COLORS[ganttRows[ti].color] ?? "#a1a1aa";
+          const arrowColor = isLoop ? "#8b5cf6" : targetColor;
+          _usedArrowColors.add(arrowColor);
+          const lagH = lagToHours(c.lag, c.lagUnit);
+          const srcX = _barPx[fi].r + 2;
+          const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
+          const markerId = `gantt-arr-${arrowColor.replace('#', '')}`;
+          _fwdRoutes.push({
+            id: c.id, from: c.from, to: c.to,
+            path: _routeFwd(fi, ti, arrowColor),
+            color: arrowColor,
+            marker: isLoop ? "url(#gantt-arrow-loop)" : `url(#${markerId})`,
+            w: 1.4,
+            dash: isLoop ? "5 3" : undefined,
+            lagLabel: lagH > 0 ? { text: `+${fmtDuration(lagH)}`, x: srcX + 4, y: srcY - 4, color: arrowColor } : undefined,
+          });
+        }
+
+        const _subRoutes: _ArrowR[] = [];
+        const _loopRoutes: { id: string; path: string; label: string; labelX: number; labelY: number }[] = [];
+        for (const c of ganttSubConns) {
+          const fi = rowIndex.get(c.from), ti = rowIndex.get(c.to);
+          if (fi === undefined || ti === undefined) continue;
+          const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
+          if (c.loopDuration !== undefined) {
+            const srcX = _barPx[fi].r + 2;
+            const dstCX = (_barPx[ti].l + _barPx[ti].r) / 2;
+            const bottomY = HEADER_H + (Math.max(fi, ti) + 1) * ROW_H + 4;
+            const dstYL = HEADER_H + ti * ROW_H + ROW_H - 6;
+            _loopRoutes.push({
+              id: c.id,
+              path: `M ${srcX},${srcY} H ${srcX + 14} V ${bottomY} H ${dstCX} V ${dstYL}`,
+              label: `↺ ${fmtDuration(toHours(c.loopDuration, (c.loopDurationUnit ?? "h") as "h" | "d"))}`,
+              labelX: (srcX + 14 + dstCX) / 2,
+              labelY: bottomY + 10,
+            });
+            continue;
+          }
+          const lagH = lagToHours(c.lag, c.lagUnit as "h" | "d" | undefined);
+          const srcX = _barPx[fi].r + 2;
+          const subTargetColor = GANTT_COLORS[ganttRows[ti].color] ?? "#a1a1aa";
+          _usedArrowColors.add(subTargetColor);
+          const subMarkerId = `gantt-arr-${subTargetColor.replace('#', '')}`;
+          _subRoutes.push({
+            id: c.id, from: c.from, to: c.to,
+            path: _routeFwd(fi, ti, subTargetColor),
+            color: subTargetColor, marker: `url(#${subMarkerId})`, w: 1,
+            lagLabel: lagH > 0 ? { text: `+${fmtDuration(lagH)}`, x: srcX + 4, y: srcY - 4, color: subTargetColor } : undefined,
+          });
+        }
+
+        // ── Loop Zone indicators (semi-transparent band showing iterative cycle span) ──
+        type _LoopZone = { id: string; x: number; w: number; y: number; h: number; color: string; label: string };
+        const _loopZones: _LoopZone[] = [];
+        // Phase-level back edges
+        for (const c of connections) {
+          if (!backEdgeIds.has(c.id) || !c.loopDuration) continue;
+          const ti = rowIndex.get(c.to), fi = rowIndex.get(c.from);
+          if (ti === undefined || fi === undefined) continue;
+          const entryES = ganttRows[ti].absoluteES;
+          const loopH = toHours(c.loopDuration, c.loopDurationUnit ?? "h");
+          const minRow = Math.min(ti, fi), maxRow = Math.max(ti, fi);
+          _loopZones.push({ id: c.id, x: entryES * HR_W, w: loopH * HR_W, y: HEADER_H + minRow * ROW_H, h: (maxRow - minRow + 1) * ROW_H, color: GANTT_COLORS[ganttRows[ti].color] ?? "#a1a1aa", label: `↺ ${fmtDuration(loopH)}` });
+        }
+        // Sub-task level back edges
+        for (const c of ganttSubConns) {
+          if (c.loopDuration === undefined) continue;
+          const ti = rowIndex.get(c.to), fi = rowIndex.get(c.from);
+          if (ti === undefined || fi === undefined) continue;
+          const entryES = ganttRows[ti].absoluteES;
+          const loopH = toHours(c.loopDuration, (c.loopDurationUnit ?? "h") as "h" | "d");
+          const minRow = Math.min(ti, fi), maxRow = Math.max(ti, fi);
+          _loopZones.push({ id: c.id, x: entryES * HR_W, w: loopH * HR_W, y: HEADER_H + minRow * ROW_H, h: (maxRow - minRow + 1) * ROW_H, color: GANTT_COLORS[ganttRows[ti].color] ?? "#a1a1aa", label: `↺ ${fmtDuration(loopH)}` });
+        }
+
+        // ── Selection highlight sets ──
+        const _selId = ganttSelectedRowId;
+        const _selArrowIds = new Set<string>();
+        const _selRelatedRowIds = new Set<string>();
+        if (_selId) {
+          _selRelatedRowIds.add(_selId);
+          const allRoutes = [..._fwdRoutes, ..._subRoutes];
+          for (const r of allRoutes) {
+            if (r.from === _selId || r.to === _selId) {
+              _selArrowIds.add(r.id);
+              _selRelatedRowIds.add(r.from);
+              _selRelatedRowIds.add(r.to);
+            }
+          }
+          // Also check back-edge / loop connections
+          for (const c of connections.filter((c) => backEdgeIds.has(c.id))) {
+            if (c.from === _selId || c.to === _selId) {
+              _selArrowIds.add(c.id);
+              _selRelatedRowIds.add(c.from);
+              _selRelatedRowIds.add(c.to);
+            }
+          }
+          for (const r of _loopRoutes) {
+            // loop routes use the same id scheme
+            const lc = ganttSubConns.find((c) => c.id === r.id);
+            if (lc && (lc.from === _selId || lc.to === _selId)) {
+              _selArrowIds.add(r.id);
+              _selRelatedRowIds.add(lc.from);
+              _selRelatedRowIds.add(lc.to);
+            }
+          }
+        }
+        const _hasSel = _selId !== null;
+
+        const ganttChart = (
+          <div className="rounded-xl border border-zinc-100 bg-white shadow-sm" style={{ display: 'flex', overflow: 'hidden' }}>
+            {/* Sticky label column */}
+            <div style={{ width: LABEL_W, minWidth: LABEL_W, flexShrink: 0, borderRight: '1px solid #e4e4e7', background: '#fff', zIndex: 2 }}>
+              <svg width={LABEL_W} height={svgH} className="block font-sans text-xs" style={{ display: 'block' }}
+                onMouseMove={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const y = e.clientY - rect.top - HEADER_H;
+                  if (y < 0) { setGanttHoverRowIdx(null); setGanttInsertHoverIdx(null); return; }
+                  const rowIdx = Math.floor(y / ROW_H);
+                  const yInRow = y - rowIdx * ROW_H;
+                  if (rowIdx < 0 || rowIdx >= ganttRows.length) { setGanttHoverRowIdx(null); setGanttInsertHoverIdx(null); return; }
+                  setGanttHoverRowIdx(rowIdx);
+                  if (yInRow > ROW_H - 7 && rowIdx < ganttRows.length - 1) {
+                    setGanttInsertHoverIdx(rowIdx);
+                  } else if (yInRow < 7 && rowIdx > 0) {
+                    setGanttInsertHoverIdx(rowIdx - 1);
+                  } else {
+                    setGanttInsertHoverIdx(null);
+                  }
+                }}
+                onMouseLeave={() => { setGanttHoverRowIdx(null); setGanttInsertHoverIdx(null); }}
+              >
+                <defs>
+                  <clipPath id="label-clip">
+                    <rect x={0} y={0} width={LABEL_W - 6} height={svgH} />
+                  </clipPath>
+                </defs>
+                {/* Row backgrounds for label column */}
+                {ganttRows.map((r, i) => {
+                  const isPhase = r.indent === 0;
+                  const isSelRow = _hasSel && _selRelatedRowIds.has(r.id);
+                  const isSelPrimary = _selId === r.id;
+                  const bg = isSelPrimary ? '#dbeafe' : isSelRow ? '#eff6ff' : isPhase ? (i % 2 === 0 ? '#f4f4f6' : '#ebebed') : (i % 2 === 0 ? '#fafafa' : '#f3f3f5');
+                  return (
+                    <g key={r.id + '-lbg'} style={{ cursor: 'pointer' }} onClick={() => setGanttSelectedRowId(r.id === _selId ? null : r.id)}>
+                      <rect x={0} y={HEADER_H + i * ROW_H} width={LABEL_W} height={ROW_H} fill={bg} />
+                      <line x1={0} y1={HEADER_H + (i + 1) * ROW_H} x2={LABEL_W} y2={HEADER_H + (i + 1) * ROW_H} stroke={isPhase ? '#d4d4d8' : '#e8e8ea'} strokeWidth={1} />
+                    </g>
+                  );
+                })}
+                {/* Indent lines and expand toggles */}
+                {ganttRows.map((row, i) => {
+                  const labelX = row.indent > 0 ? 20 : row.hasSubTasks ? 18 : 8;
+                  const labelY = HEADER_H + i * ROW_H;
+                  const isEditing = ganttEditId === row.id;
+                  return (
+                  <g key={row.id + '-lbl'}>
+                    {row.indent > 0 && (
+                      <line x1={12} y1={HEADER_H + (i - 0.5) * ROW_H} x2={12} y2={HEADER_H + i * ROW_H + ROW_H / 2} stroke="#d4d4d8" strokeWidth={1} />
+                    )}
+                    {row.hasSubTasks && (
+                      <g style={{ cursor: 'pointer' }}
+                        onClick={() => setExpandedPhaseIds((prev) => { const next = new Set(prev); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); return next; })}>
+                        <rect x={0} y={HEADER_H + i * ROW_H} width={22} height={ROW_H} fill="transparent" />
+                        <text x={6} y={HEADER_H + i * ROW_H + ROW_H / 2 + 4} fill="#a1a1aa" fontSize={9} className="select-none">
+                          {expandedPhaseIds.has(row.id) ? '▼' : '▶'}
+                        </text>
+                      </g>
+                    )}
+                    {isEditing ? (
+                      <foreignObject x={labelX} y={labelY + 4} width={LABEL_W - labelX - 4} height={ROW_H - 8}>
+                        <input
+                          autoFocus
+                          value={ganttEditTitle}
+                          onChange={(e) => setGanttEditTitle(e.target.value)}
+                          onBlur={() => { ganttUpdateTask(row.id, (t) => ({ ...t, title: ganttEditTitle })); setGanttEditId(null); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { ganttUpdateTask(row.id, (t) => ({ ...t, title: ganttEditTitle })); setGanttEditId(null); } if (e.key === 'Escape') setGanttEditId(null); }}
+                          style={{ width: '100%', height: '100%', border: '1px solid #3b82f6', borderRadius: 3, padding: '0 4px', fontSize: row.indent > 0 ? 10 : 11, fontWeight: row.indent > 0 ? 400 : 600, outline: 'none', background: '#fff' }}
+                        />
+                      </foreignObject>
+                    ) : (
+                      <text
+                        x={labelX}
+                        y={HEADER_H + i * ROW_H + ROW_H / 2 + 4}
+                        fill={row.isCritical ? '#c2410c' : row.indent > 0 ? '#52525b' : '#3f3f46'}
+                        fontSize={row.indent > 0 ? 10 : 11}
+                        fontWeight={row.isCritical ? '700' : row.indent > 0 ? '400' : '600'}
+                        clipPath="url(#label-clip)"
+                        className="select-none"
+                        style={{ cursor: 'text' }}
+                        onDoubleClick={() => { setGanttEditId(row.id); setGanttEditTitle(row.title); }}
+                        onMouseEnter={(e) => {
+                          if (ganttDescHideTimer.current) clearTimeout(ganttDescHideTimer.current);
+                          const rect = (e.target as SVGTextElement).getBoundingClientRect();
+                          setGanttDescPopover({ rowId: row.id, x: rect.left, y: rect.bottom + 4 });
+                        }}
+                        onMouseLeave={() => {
+                          ganttDescHideTimer.current = setTimeout(() => {
+                            setGanttDescPopover((prev) => prev?.rowId === row.id ? null : prev);
+                            setGanttDescEditId((prev) => prev === row.id ? null : prev);
+                          }, 250);
+                        }}
+                      >
+                        {row.isCritical && row.indent === 0 ? '● ' : ''}{row.title}
+                      </text>
+                    )}
+                    {/* Assignee badge */}
+                    {row.assignee && (
+                      <g>
+                        <circle cx={LABEL_W - 42} cy={HEADER_H + i * ROW_H + ROW_H / 2} r={7} fill="#818cf8" opacity={0.9} />
+                        <text x={LABEL_W - 42} y={HEADER_H + i * ROW_H + ROW_H / 2 + 3.5} textAnchor="middle" fill="#fff" fontSize={8} fontWeight="700" className="select-none">
+                          {row.assignee.substring(0, 2).toUpperCase()}
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                  );
+                })}
+                {/* Header */}
+                <line x1={0} y1={HEADER_H} x2={LABEL_W} y2={HEADER_H} stroke="#e4e4e7" strokeWidth={1} />
+                <text x={8} y={HEADER_H - 12} fill="#a1a1aa" fontSize={10} fontWeight="600">TASK</text>
+
+                {/* Gear icon on row hover — navigate to board (positioned left of expand arrow) */}
+                {ganttHoverRowIdx !== null && ganttHoverRowIdx >= 0 && ganttHoverRowIdx < ganttRows.length && (() => {
+                  const i = ganttHoverRowIdx;
+                  const row = ganttRows[i];
+                  const cy = HEADER_H + i * ROW_H + ROW_H / 2;
+                  // Only show for rows that have an associated board to navigate to
+                  const canNavigate = row.indent === 0 ? row.hasSubTasks : true;
+                  if (!canNavigate) return null;
+                  return (
+                    <g
+                      style={{ cursor: 'pointer' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (row.id.includes(':')) {
+                          const phaseId = row.id.split(':')[0];
+                          const phase = tasks.find(t => t.id === phaseId);
+                          if (phase && onDrillIn) {
+                            setGanttFullscreen(false);
+                            onDrillIn(phase.id, phase.title, true);
+                          }
+                        } else if (onDrillIn) {
+                          setGanttFullscreen(false);
+                          onDrillIn(row.id, row.title, true);
+                        }
+                      }}
+                      title="Ins Board springen"
+                    >
+                      <rect x={LABEL_W - 22} y={cy - 8} width={16} height={16} rx={3} fill="#f4f4f5" stroke="#d4d4d8" strokeWidth={0.5} />
+                      <g transform={`translate(${LABEL_W - 19}, ${cy - 5}) scale(0.625)`}>
+                        <path d="M8 10a2 2 0 100-4 2 2 0 000 4z" fill="none" stroke="#71717a" strokeWidth="1.5" strokeLinecap="round"/>
+                        <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M3.05 12.95l1.06-1.06M11.89 4.11l1.06-1.06" stroke="#71717a" strokeWidth="1.5" strokeLinecap="round"/>
+                      </g>
+                    </g>
+                  );
+                })()}
+
+                {/* "+" insert zone between rows */}
+                {ganttInsertHoverIdx !== null && ganttInsertHoverIdx >= 0 && ganttInsertHoverIdx < ganttRows.length - 1 && (() => {
+                  const insertY = HEADER_H + (ganttInsertHoverIdx + 1) * ROW_H;
+                  const insertAfterIdx = ganttInsertHoverIdx;
+                  return (
+                    <g
+                      style={{ cursor: 'pointer' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Determine context: insert a new task between row[insertAfterIdx] and row[insertAfterIdx+1]
+                        const rowAbove = ganttRows[insertAfterIdx];
+                        const rowBelow = ganttRows[insertAfterIdx + 1];
+                        const newTaskId = `gt-${Date.now()}`;
+
+                        if (rowAbove.indent === 1) {
+                          // Subtask context: insert in same phase after this subtask
+                          const [phaseId, aboveSubId] = rowAbove.id.split(':');
+                          const belowInSamePhase = rowBelow?.indent === 1 && rowBelow.id.startsWith(phaseId + ':');
+                          const belowSubId = belowInSamePhase ? rowBelow.id.split(':')[1] : null;
+                          setTasks(prev => prev.map(t => {
+                            if (t.id !== phaseId || !t.subBoard) return t;
+                            const newTask: TaskCard = { id: newTaskId, title: 'Neuer Task', color: t.color, x: 0, y: 0, duration: 4, unit: 'h' };
+                            const newConns = [...t.subBoard.connections];
+                            newConns.push({ id: `gc-${Date.now()}`, from: aboveSubId, to: newTaskId });
+                            if (belowSubId) {
+                              const existIdx = newConns.findIndex(c => c.from === aboveSubId && c.to === belowSubId);
+                              if (existIdx >= 0) newConns.splice(existIdx, 1);
+                              newConns.push({ id: `gc-${Date.now() + 1}`, from: newTaskId, to: belowSubId });
+                            }
+                            return { ...t, subBoard: { ...t.subBoard, tasks: [...t.subBoard.tasks, newTask], connections: newConns } };
+                          }));
+                        } else if (rowAbove.indent === 0 && rowBelow?.indent === 1 && rowBelow.id.startsWith(rowAbove.id + ':')) {
+                          // Phase header → first subtask: insert at beginning of phase
+                          const phaseId = rowAbove.id;
+                          const belowSubId = rowBelow.id.split(':')[1];
+                          setTasks(prev => prev.map(t => {
+                            if (t.id !== phaseId || !t.subBoard) return t;
+                            const newTask: TaskCard = { id: newTaskId, title: 'Neuer Task', color: t.color, x: 0, y: 0, duration: 4, unit: 'h' };
+                            const newConns = [...t.subBoard.connections];
+                            newConns.push({ id: `gc-${Date.now()}`, from: newTaskId, to: belowSubId });
+                            return { ...t, subBoard: { ...t.subBoard, tasks: [newTask, ...t.subBoard.tasks], connections: newConns } };
+                          }));
+                        } else {
+                          // Root level: insert new phase-level task
+                          const newTask: TaskCard = { id: newTaskId, title: 'Neue Phase', color: 'sky' as ColorToken, x: 0, y: 0, duration: 8, unit: 'h' };
+                          setTasks(prev => {
+                            const idx = prev.findIndex(t => t.id === rowAbove.id);
+                            const updated = [...prev];
+                            updated.splice(idx + 1, 0, newTask);
+                            return updated;
+                          });
+                        }
+                        setGanttInsertHoverIdx(null);
+                      }}
+                    >
+                      {/* Horizontal line */}
+                      <line x1={20} y1={insertY} x2={LABEL_W - 4} y2={insertY} stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="3 2" opacity={0.5} />
+                      {/* Circle with + */}
+                      <circle cx={12} cy={insertY} r={8} fill="#3b82f6" />
+                      <text x={12} y={insertY + 4} textAnchor="middle" fill="#fff" fontSize={12} fontWeight="700" className="select-none">+</text>
+                    </g>
+                  );
+                })()}
+              </svg>
+            </div>
+            {/* Scrollable time area */}
+            <div style={{ overflowX: 'auto', flex: 1 }}>
             <svg
-              width={svgW}
+              width={svgTimeW}
               height={svgH}
               className="block font-sans text-xs"
-              style={{ minWidth: svgW }}
+              style={{ minWidth: svgTimeW }}
+              onClick={(e) => { if (e.target === e.currentTarget) setGanttSelectedRowId(null); }}
             >
+              {/* Deselect background rect */}
+              <rect x={0} y={0} width={svgTimeW} height={svgH} fill="transparent" onClick={() => setGanttSelectedRowId(null)} />
               {/* Row backgrounds */}
-              {ganttRows.map((r, i) => (
-                <rect
-                  key={r.id + "-bg"}
-                  x={0}
-                  y={HEADER_H + i * ROW_H}
-                  width={svgW}
-                  height={ROW_H}
-                  fill={r.indent > 0 ? "#fafafa" : i % 2 === 0 ? "#f9f9fb" : "#ffffff"}
-                />
-              ))}
+              {ganttRows.map((r, i) => {
+                const isPhase = r.indent === 0;
+                const isSelRow = _hasSel && _selRelatedRowIds.has(r.id);
+                const isSelPrimary = _selId === r.id;
+                const bg = isSelPrimary ? '#dbeafe' : isSelRow ? '#eff6ff' : isPhase ? (i % 2 === 0 ? '#f4f4f6' : '#ebebed') : (i % 2 === 0 ? '#fafafa' : '#f3f3f5');
+                return (
+                  <g key={r.id + "-bg"}>
+                    <rect x={0} y={HEADER_H + i * ROW_H} width={svgTimeW} height={ROW_H} fill={bg} />
+                    <line x1={0} y1={HEADER_H + (i + 1) * ROW_H} x2={svgTimeW} y2={HEADER_H + (i + 1) * ROW_H} stroke={isPhase ? '#d4d4d8' : '#e8e8ea'} strokeWidth={1} />
+                  </g>
+                );
+              })}
 
               {/* Day column shading (every other day) */}
               {dayTicks.map((h, di) =>
                 di % 2 === 1 ? (
                   <rect
                     key={"dayshade-" + di}
-                    x={LABEL_W + h * HR_W}
+                    x={h * HR_W}
                     y={HEADER_H}
                     width={Math.min(HOURS_PER_DAY * HR_W, (maxHours - h) * HR_W)}
                     height={ganttRows.length * ROW_H}
@@ -1619,13 +2441,23 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 ) : null
               )}
 
+              {/* Loop zone indicators — semi-transparent band behind loop body rows */}
+              {_loopZones.map((z) => (
+                <g key={`lz-${z.id}`}>
+                  <rect x={z.x} y={z.y} width={z.w} height={z.h} fill={z.color} opacity={0.06} rx={4} />
+                  <rect x={z.x} y={z.y} width={z.w} height={z.h} fill="none" stroke={z.color} strokeWidth={1.5} strokeDasharray="4 3" opacity={0.25} rx={4} />
+                  {/* Right-edge milestone line extending below the loop to show where post-loop tasks start */}
+                  <line x1={z.x + z.w} y1={z.y} x2={z.x + z.w} y2={z.y + z.h + ROW_H} stroke={z.color} strokeWidth={1} strokeDasharray="3 3" opacity={0.3} />
+                </g>
+              ))}
+
               {/* Hour grid lines (light) + day lines (medium) */}
               {showHourTicks && Array.from({ length: maxHours + 1 }, (_, h) => (
                 h % HOURS_PER_DAY !== 0 && (
                   <line
                     key={"hline-" + h}
-                    x1={LABEL_W + h * HR_W} y1={HEADER_H}
-                    x2={LABEL_W + h * HR_W} y2={svgH - PAD}
+                    x1={h * HR_W} y1={HEADER_H}
+                    x2={h * HR_W} y2={svgH - PAD}
                     stroke="#f0f0f2" strokeWidth={1}
                   />
                 )
@@ -1633,8 +2465,8 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               {dayTicks.map((h) => (
                 <line
                   key={"dline-" + h}
-                  x1={LABEL_W + h * HR_W} y1={HEADER_H - 10}
-                  x2={LABEL_W + h * HR_W} y2={svgH - PAD}
+                  x1={h * HR_W} y1={HEADER_H - 10}
+                  x2={h * HR_W} y2={svgH - PAD}
                   stroke="#e4e4e7" strokeWidth={1}
                 />
               ))}
@@ -1645,7 +2477,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 return (
                   <text
                     key={"dlabel-" + di}
-                    x={LABEL_W + h * HR_W + (next - h) * HR_W / 2}
+                    x={h * HR_W + (next - h) * HR_W / 2}
                     y={HEADER_H - 20}
                     textAnchor="middle"
                     fill="#71717a"
@@ -1662,7 +2494,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 h % HOURS_PER_DAY !== 0 && (
                   <text
                     key={"hlabel-" + h}
-                    x={LABEL_W + h * HR_W}
+                    x={h * HR_W}
                     y={HEADER_H - 6}
                     textAnchor="middle"
                     fill="#d4d4d8"
@@ -1673,17 +2505,16 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 )
               ))}
 
-              {/* Arrow markers */}
+              {/* Arrow markers — per-color for target-colored arrows */}
               <defs>
-                <marker id="gantt-arrow-norm" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
-                  <polygon points="0 0, 6 2.5, 0 5" fill="#cbd5e1" />
-                </marker>
-                <marker id="gantt-arrow-crit" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
-                  <polygon points="0 0, 6 2.5, 0 5" fill="#f97316" />
-                </marker>
                 <marker id="gantt-arrow-loop" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
                   <polygon points="0 0, 6 2.5, 0 5" fill="#8b5cf6" />
                 </marker>
+                {Array.from(_usedArrowColors).map((clr) => (
+                  <marker key={clr} id={`gantt-arr-${clr.replace('#', '')}`} markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                    <polygon points="0 0, 6 2.5, 0 5" fill={clr} />
+                  </marker>
+                ))}
               </defs>
 
               {/* Back-edge loop arrows — routed from source bar end → right gutter → target bar end */}
@@ -1694,20 +2525,21 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 const fromRow = ganttRows[fi];
                 const toRow   = ganttRows[ti];
                 const ELBOW   = 14;
-                const srcX    = LABEL_W + fromRow.absoluteEF * HR_W;
-                const dstX    = LABEL_W + (toRow.absoluteES + toRow.absoluteEF) / 2 * HR_W; // center of target bar
+                const srcX    = fromRow.absoluteEF * HR_W;
+                const dstX    = (toRow.absoluteES + toRow.absoluteEF) / 2 * HR_W;  // center of target bar
                 const srcY    = HEADER_H + fi * ROW_H + ROW_H / 2;
-                const dstY    = HEADER_H + ti * ROW_H + ROW_H - 6; // bottom edge of target bar
-                // Route: right → down below the lowest loop row → left to target bar center → up into bar bottom
-                const bottomY   = HEADER_H + (Math.max(fi, ti) + 1) * ROW_H; // midpoint of gap between rows
+                const dstY    = HEADER_H + ti * ROW_H + ROW_H - 6; // bottom-center of target bar
+                const bottomY = HEADER_H + (Math.max(fi, ti) + 1) * ROW_H;
                 const arrowPath = `M ${srcX},${srcY} H ${srcX + ELBOW} V ${bottomY} H ${dstX} V ${dstY}`;
                 const loopLabel = c.loopDuration
                   ? `↺ ${fmtDuration(toHours(c.loopDuration, c.loopDurationUnit ?? "h"))}`
                   : "↺";
                 const labelX = (srcX + ELBOW + dstX) / 2;
+                const beHit = _hasSel && _selArrowIds.has(c.id);
+                const beOp = _hasSel ? (beHit ? 1 : 0.12) : 1;
                 return (
-                  <g key={c.id}>
-                    <path d={arrowPath} fill="none" stroke="#8b5cf6" strokeWidth={1.8}
+                  <g key={c.id} opacity={beOp}>
+                    <path d={arrowPath} fill="none" stroke="#8b5cf6" strokeWidth={beHit ? 2.6 : 1.8}
                       strokeDasharray="5 3" strokeLinejoin="round"
                       markerEnd="url(#gantt-arrow-loop)" />
                     <text x={labelX} y={bottomY - 3} textAnchor="middle" fill="#8b5cf6" fontSize={9} fontWeight="700" className="select-none">
@@ -1717,123 +2549,195 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 );
               })}
 
-              {/* Dependency arrows — only forward connections; back edges shown as loop markers separately */}
-              {forwardConnections.map((c) => {
-                const fi = rowIndex.get(c.from);
-                const ti = rowIndex.get(c.to);
-                if (fi === undefined || ti === undefined) return null;
-                const isCritical = criticalPath.criticalConnectionIds.has(c.id);
-                const isLoopEdge = cycleEdgeIds.has(c.id);
-                const lagH = lagToHours(c.lag, c.lagUnit);
-                const fromRow = ganttRows[fi];
-                const toRow = ganttRows[ti];
-
-                const ELBOW = 12;
-                const srcX = LABEL_W + fromRow.absoluteEF * HR_W;
-                const dstX = LABEL_W + toRow.absoluteES * HR_W;
-                const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
-                const dstY = HEADER_H + ti * ROW_H + ROW_H / 2;
-
-                const turnX = srcX + ELBOW;
-                const arrowPath = `M ${srcX},${srcY} H ${turnX} V ${dstY} H ${dstX}`;
-
-                const strokeColor = isLoopEdge ? "#8b5cf6" : isCritical ? "#f97316" : "#b0b8c8";
-                const markerUrl = isLoopEdge ? "url(#gantt-arrow-loop)" : `url(#gantt-arrow-${isCritical ? "crit" : "norm"})`;
-
+              {/* Dependency arrows — pre-computed routes (bar-free) */}
+              {_fwdRoutes.map((r) => {
+                const hit = _hasSel && _selArrowIds.has(r.id);
+                const op = _hasSel ? (hit ? 1 : 0.12) : 1;
                 return (
-                  <g key={c.id}>
-                    {lagH > 0 && (
-                      <text x={srcX + 4} y={srcY - 4} fill={isCritical ? "#f97316" : "#94a3b8"} fontSize={8} fontWeight="600">
-                        +{fmtDuration(lagH)}
+                  <g key={r.id} opacity={op}>
+                    {r.lagLabel && (
+                      <text x={r.lagLabel.x} y={r.lagLabel.y} fill={r.lagLabel.color} fontSize={8} fontWeight="600">
+                        {r.lagLabel.text}
                       </text>
                     )}
-                    <path
-                      d={arrowPath}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth={isCritical ? 2 : 1.2}
-                      strokeDasharray={isLoopEdge ? "5 3" : undefined}
-                      strokeLinejoin="round"
-                      markerEnd={markerUrl}
-                    />
+                    <path d={r.path} fill="none" stroke={r.color} strokeWidth={hit ? r.w + 1.2 : r.w}
+                      strokeDasharray={r.dash} strokeLinejoin="round" markerEnd={r.marker} />
                   </g>
                 );
               })}
 
-              {/* Bars + labels */}
+              {/* Sub-board loop arrows (iterative flows — exempt from bar-free rule) */}
+              {_loopRoutes.map((r) => {
+                const hit = _hasSel && _selArrowIds.has(r.id);
+                const op = _hasSel ? (hit ? 1 : 0.12) : 1;
+                return (
+                  <g key={r.id} opacity={op}>
+                    <path d={r.path} fill="none" stroke="#8b5cf6" strokeWidth={hit ? 2.6 : 1.8}
+                      strokeDasharray="5 3" strokeLinejoin="round"
+                      markerEnd="url(#gantt-arrow-loop)" />
+                    <text x={r.labelX} y={r.labelY} textAnchor="middle" fill="#8b5cf6" fontSize={9} fontWeight="700" className="select-none">
+                      {r.label}
+                    </text>
+                  </g>
+                );
+              })}
+              {/* Sub-board forward arrows — bar-free */}
+              {_subRoutes.map((r) => {
+                const hit = _hasSel && _selArrowIds.has(r.id);
+                const op = _hasSel ? (hit ? 1 : 0.12) : 1;
+                return (
+                  <g key={r.id} opacity={op}>
+                    {r.lagLabel && (
+                      <text x={r.lagLabel.x} y={r.lagLabel.y} fill={r.lagLabel.color} fontSize={8} fontWeight="600">{r.lagLabel.text}</text>
+                    )}
+                    <path d={r.path} fill="none" stroke={r.color} strokeWidth={hit ? r.w + 1 : r.w} strokeLinejoin="round" markerEnd={r.marker} />
+                  </g>
+                );
+              })}
+
+              {/* Bars — draggable + double-click to edit duration */}
               {ganttRows.map((row, i) => {
-                const barX = LABEL_W + row.absoluteES * HR_W + 2;
+                const barX = row.absoluteES * HR_W + 2;
                 const barW = Math.max((row.absoluteEF - row.absoluteES) * HR_W - 4, 4);
                 const barY = HEADER_H + i * ROW_H + 6;
                 const barH = ROW_H - 12;
                 const col = GANTT_COLORS[row.color] ?? "#a1a1aa";
-                const durH = toHours(row.duration, row.unit);
+                const durH = row.hasSubTasks ? (row.absoluteEF - row.absoluteES) : toHours(row.duration, row.unit);
                 const iters = Math.max(1, row.iterations ?? 1);
                 const singleBarW = iters > 1 ? Math.max((barW - (iters - 1) * 3) / iters, 2) : barW;
-                const labelX = row.indent > 0 ? 18 : 8;
-                const maxChars = row.indent > 0 ? 18 : 22;
+                const isDraggable = !row.hasSubTasks; // phases auto-derive from subtasks
+                const isDurEditing = ganttEditDurId === row.id;
+
+                const handleBarPointerDown = isDraggable ? (e: React.PointerEvent<SVGRectElement>) => {
+                  e.stopPropagation();
+                  (e.target as SVGRectElement).setPointerCapture(e.pointerId);
+                  ganttDragRef.current = { rowId: row.id, startX: e.clientX, origES: row.absoluteES };
+                } : undefined;
+
+                const handleBarPointerMove = isDraggable ? (e: React.PointerEvent<SVGRectElement>) => {
+                  const drag = ganttDragRef.current;
+                  if (!drag || drag.rowId !== row.id) return;
+                  const dx = e.clientX - drag.startX;
+                  const dh = Math.round((dx / HR_W) * 2) / 2; // snap to 0.5h
+                  const newES = Math.max(0, drag.origES + dh);
+                  // Update the task duration stays the same, but we add/remove lag on incoming connections
+                  // For simplicity: shift by adjusting the task's lag on its first incoming connection
+                  // Actually — we store the shift as a "ganttOffset" or adjust lag. Simplest: update the lag.
+                  // But for subtasks within a phase, the position is determined by CPM, not manually.
+                  // So for now: only allow drag for tasks that have NO predecessors (start tasks) or adjust lag.
+                } : undefined;
+
+                const handleBarPointerUp = isDraggable ? (e: React.PointerEvent<SVGRectElement>) => {
+                  const drag = ganttDragRef.current;
+                  if (!drag || drag.rowId !== row.id) return;
+                  ganttDragRef.current = null;
+                  (e.target as SVGRectElement).releasePointerCapture(e.pointerId);
+                  const dx = e.clientX - drag.startX;
+                  const dh = Math.round((dx / HR_W) * 2) / 2;
+                  if (dh === 0) return;
+                  // Apply shift: adjust lag on incoming connections
+                  const rowId = row.id;
+                  if (rowId.includes(':')) {
+                    // Subtask: find the parent phase's subBoard connection targeting this task
+                    const [phaseId, subId] = rowId.split(':');
+                    setTasks((prev) => prev.map((t) => {
+                      if (t.id !== phaseId || !t.subBoard) return t;
+                      const updConns = t.subBoard.connections.map((c) => {
+                        if (c.to !== subId) return c;
+                        const oldLag = c.lag ?? 0;
+                        return { ...c, lag: Math.max(0, oldLag + dh), lagUnit: c.lagUnit ?? 'h' };
+                      });
+                      return { ...t, subBoard: { ...t.subBoard, connections: updConns } };
+                    }));
+                  } else {
+                    // Root task: adjust lag on root connections
+                    setConnections((prev) => prev.map((c) => {
+                      if (c.to !== rowId) return c;
+                      const oldLag = c.lag ?? 0;
+                      return { ...c, lag: Math.max(0, oldLag + dh), lagUnit: c.lagUnit ?? 'h' };
+                    }));
+                  }
+                } : undefined;
+
+                const canEditDur = !row.hasSubTasks; // phases auto-calculated
+                const commitDuration = () => {
+                  const parsed = parseFloat(ganttEditDur);
+                  if (!isNaN(parsed) && parsed > 0) {
+                    ganttUpdateTask(row.id, (t) => ({ ...t, duration: parsed, unit: ganttEditUnit }));
+                  }
+                  setGanttEditDurId(null);
+                };
+
+                const isBarSelected = _selId === row.id;
+                const isBarRelated = _hasSel && _selRelatedRowIds.has(row.id);
+                const barDimFactor = _hasSel && !isBarRelated ? 0.15 : 1;
+                const handleBarClick = (e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  setGanttSelectedRowId(row.id === _selId ? null : row.id);
+                };
+
                 return (
-                  <g key={row.id}>
-                    {row.indent > 0 && (
-                      <line x1={14} y1={HEADER_H + (i - 0.5) * ROW_H} x2={14} y2={HEADER_H + i * ROW_H + ROW_H / 2} stroke="#d4d4d8" strokeWidth={1} />
+                  <g key={row.id} onClick={handleBarClick} style={{ cursor: 'pointer' }}>
+                    {isBarSelected && (
+                      <rect x={barX - 2} y={barY - 2} width={barW + 4} height={barH + 4} rx={6} fill="none" stroke={col} strokeWidth={2} opacity={0.6} />
                     )}
-                    <text
-                      x={labelX}
-                      y={HEADER_H + i * ROW_H + ROW_H / 2 + 4}
-                      fill={row.isCritical ? "#c2410c" : row.indent > 0 ? "#71717a" : "#3f3f46"}
-                      fontSize={row.indent > 0 ? 9 : 11}
-                      fontWeight={row.isCritical ? "700" : row.indent > 0 ? "400" : "500"}
-                      className="select-none"
-                    >
-                      {row.isCritical && row.indent === 0 ? "● " : ""}{row.title.length > maxChars ? row.title.slice(0, maxChars - 1) + "…" : row.title}
-                    </text>
                     {iters > 1 ? (
-                      // Iterative: N segmented bars
                       <>
                         {Array.from({ length: iters }, (_, si) => {
                           const segX = barX + si * (singleBarW + 3);
                           return (
-                            <rect
-                              key={si}
-                              x={segX} y={barY}
-                              width={singleBarW} height={barH}
-                              rx={3}
-                              fill={col}
-                              opacity={row.isCritical ? 0.9 - si * 0.06 : 0.55 - si * 0.05}
-                            />
+                            <rect key={si} x={segX} y={barY} width={singleBarW} height={barH} rx={3}
+                              fill={col} opacity={(row.isCritical ? 0.9 - si * 0.06 : 0.55 - si * 0.05) * barDimFactor}
+                              style={isDraggable ? { cursor: 'grab' } : undefined}
+                              onPointerDown={handleBarPointerDown} onPointerMove={handleBarPointerMove} onPointerUp={handleBarPointerUp} />
                           );
                         })}
-                        {/* ↺ Nx label centered over all segments */}
                         {barW > 32 && (
-                          <text
-                            x={barX + barW / 2}
-                            y={barY + barH / 2 + 4}
-                            textAnchor="middle"
-                            fill="#fff"
-                            fontSize={9}
-                            fontWeight="700"
-                            className="select-none"
-                          >
+                          <text x={barX + barW / 2} y={barY + barH / 2 + 4} textAnchor="middle" fill="#fff" fontSize={9} fontWeight="700"
+                            className="select-none" style={{ pointerEvents: 'none' }}>
                             ↺ {iters}× {fmtDuration(durH)}
                           </text>
                         )}
                       </>
                     ) : (
                       <>
-                        <rect x={barX} y={barY} width={barW} height={barH} rx={4} fill={col} opacity={row.isCritical ? 0.9 : row.indent > 0 ? 0.4 : 0.55} />
-                        {barW > 24 && (
-                          <text
-                            x={barX + barW / 2}
-                            y={barY + barH / 2 + 4}
-                            textAnchor="middle"
-                            fill="#fff"
-                            fontSize={9}
-                            fontWeight="600"
-                            className="select-none"
-                          >
+                        <rect x={barX} y={barY} width={barW} height={barH} rx={4} fill={col}
+                          opacity={(row.isCritical ? 0.9 : row.indent > 0 ? 0.4 : 0.55) * barDimFactor}
+                          style={isDraggable ? { cursor: 'grab' } : undefined}
+                          onPointerDown={handleBarPointerDown} onPointerMove={handleBarPointerMove} onPointerUp={handleBarPointerUp} />
+                        {isDurEditing && canEditDur ? (
+                          <foreignObject x={barX} y={barY - 2} width={Math.max(barW, 90)} height={barH + 4}>
+                            <div style={{ display: 'flex', height: '100%', gap: 2, alignItems: 'center' }}>
+                              <input
+                                autoFocus
+                                value={ganttEditDur}
+                                onChange={(e) => setGanttEditDur(e.target.value)}
+                                onBlur={commitDuration}
+                                onKeyDown={(e) => { if (e.key === 'Enter') commitDuration(); if (e.key === 'Escape') setGanttEditDurId(null); }}
+                                style={{ flex: 1, minWidth: 30, height: '100%', border: 'none', borderRadius: 3, padding: '0 3px', fontSize: 10, fontWeight: 600, textAlign: 'center', outline: '2px solid #3b82f6', background: 'rgba(255,255,255,0.95)', color: '#333' }}
+                              />
+                              <button
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  const newUnit = ganttEditUnit === 'h' ? 'd' : 'h';
+                                  const cur = parseFloat(ganttEditDur) || 0;
+                                  const converted = newUnit === 'd' ? Math.round((cur / 8) * 100) / 100 : Math.round(cur * 8 * 100) / 100;
+                                  setGanttEditUnit(newUnit);
+                                  setGanttEditDur(String(converted));
+                                }}
+                                style={{ height: '100%', padding: '0 4px', borderRadius: 3, border: '1px solid #93c5fd', background: '#dbeafe', color: '#1d4ed8', fontSize: 9, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >
+                                {ganttEditUnit}
+                              </button>
+                            </div>
+                          </foreignObject>
+                        ) : barW > 24 ? (
+                          <text x={barX + barW / 2} y={barY + barH / 2 + 4} textAnchor="middle" fill="#fff" fontSize={9} fontWeight="600"
+                            className="select-none" style={canEditDur ? { cursor: 'text' } : undefined}
+                            onDoubleClick={canEditDur ? (e) => { e.stopPropagation(); setGanttEditDurId(row.id); setGanttEditDur(String(row.duration)); setGanttEditUnit(row.unit ?? 'h'); } : undefined}>
                             {fmtDuration(durH)}
                           </text>
-                        )}
+                        ) : null}
                       </>
                     )}
                   </g>
@@ -1841,11 +2745,97 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               })}
 
               {/* Header separator */}
-              <line x1={0} y1={HEADER_H} x2={svgW} y2={HEADER_H} stroke="#e4e4e7" strokeWidth={1} />
-              <text x={8} y={HEADER_H - 22} fill="#a1a1aa" fontSize={10} fontWeight="600">TASK</text>
+              <line x1={0} y1={HEADER_H} x2={svgTimeW} y2={HEADER_H} stroke="#e4e4e7" strokeWidth={1} />
             </svg>
+            </div>
+            {/* Description popover (fixed position, unaffected by overflow) */}
+            {ganttDescPopover && (() => {
+              const hovRow = ganttRows.find((r) => r.id === ganttDescPopover.rowId);
+              if (!hovRow) return null;
+              const isEditing = ganttDescEditId === hovRow.id;
+              const desc = hovRow.note || '';
+              return (
+                <div
+                  style={{ position: 'fixed', left: ganttDescPopover.x, top: ganttDescPopover.y, zIndex: 1000, minWidth: 220, maxWidth: 380 }}
+                  onMouseEnter={() => { if (ganttDescHideTimer.current) clearTimeout(ganttDescHideTimer.current); }}
+                  onMouseLeave={() => { setGanttDescPopover(null); setGanttDescEditId(null); }}
+                >
+                  <div style={{ background: '#fff', border: '1px solid #d4d4d8', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', padding: '8px 10px', fontSize: 12, color: '#3f3f46' }}>
+                    {isEditing ? (
+                      <textarea
+                        autoFocus
+                        value={ganttDescEditText}
+                        onChange={(e) => setGanttDescEditText(e.target.value)}
+                        onBlur={() => {
+                          ganttUpdateTask(hovRow.id, (t) => ({ ...t, note: ganttDescEditText || undefined }));
+                          setGanttDescEditId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') { setGanttDescEditId(null); }
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            ganttUpdateTask(hovRow.id, (t) => ({ ...t, note: ganttDescEditText || undefined }));
+                            setGanttDescEditId(null);
+                          }
+                        }}
+                        style={{ width: '100%', minHeight: 60, border: '1px solid #93c5fd', borderRadius: 4, padding: '4px 6px', fontSize: 12, lineHeight: 1.4, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                        placeholder="Beschreibung eingeben…"
+                      />
+                    ) : (
+                      <div
+                        onClick={() => { setGanttDescEditId(hovRow.id); setGanttDescEditText(desc); }}
+                        style={{ cursor: 'text', whiteSpace: 'pre-wrap', lineHeight: 1.4, minHeight: 20, color: desc ? '#3f3f46' : '#a1a1aa' }}
+                      >
+                        {desc || 'Klicken um Beschreibung zu bearbeiten…'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
+
+        if (ganttFullscreen) {
+          return (
+            <div className="fixed inset-0 z-50 flex flex-col bg-white">
+              <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3 shrink-0">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-semibold text-zinc-700">Gantt — Vollansicht</span>
+                  {tasks.some((t) => (t.subBoard?.tasks?.length ?? 0) > 0) && (
+                    <button type="button"
+                      onClick={() => {
+                        const allWithSubs = tasks.filter((t) => (t.subBoard?.tasks?.length ?? 0) > 0).map((t) => t.id);
+                        const allExpanded = allWithSubs.every((id) => expandedPhaseIds.has(id));
+                        setExpandedPhaseIds(allExpanded ? new Set() : new Set(allWithSubs));
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-100"
+                    >
+                      {tasks.some((t) => expandedPhaseIds.has(t.id)) ? "⊟ Einklappen" : "⊞ Alle Tasks"}
+                    </button>
+                  )}
+                  <button type="button"
+                    onClick={() => setSoloMode((p) => !p)}
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition ${soloMode ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" : "border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100"}`}
+                    title="Resource Leveling: Solo-Modus (nur 1 Person arbeitet)"
+                  >
+                    👤 Solo-Modus
+                  </button>
+                </div>
+                <button type="button" onClick={() => setGanttFullscreen(false)}
+                  className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-100"
+                >
+                  ✕ Schliessen
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                {ganttChart}
+              </div>
+            </div>
+          );
+        }
+
+        return ganttChart;
       })()}
 
       {/* Detail Modal */}
@@ -1892,7 +2882,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                   />
                   <div className="mt-2 flex items-center gap-1.5">
                     {paletteOrder.map((pc) => {
-                      const DOT_C: Record<string, string> = { amber: "#f59e0b", orange: "#f97316", emerald: "#10b981", teal: "#14b8a6", sky: "#0ea5e9", indigo: "#6366f1", rose: "#f43f5e", violet: "#8b5cf6" };
+                      const DOT_C: Record<string, string> = { amber: "#f59e0b", orange: "#f97316", emerald: "#10b981", teal: "#14b8a6", sky: "#0ea5e9", indigo: "#6366f1", rose: "#f43f5e", violet: "#8b5cf6", mint: "#22c55e" };
                       return (
                         <button key={pc} type="button" title={COLORS[pc].label}
                           onClick={() => { setEditColor(pc); setTasks((prev) => prev.map((t) => t.id === detailTaskId ? { ...t, color: pc } : t)); }}

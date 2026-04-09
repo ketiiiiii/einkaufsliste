@@ -1,0 +1,78 @@
+ID;Parent_ID;Ebene;Bezeichnung;Dauer_h;Liegezeit_h;Vorgaenger_IDs;Iteration;Bemerkung
+P1;;Phase;Vorbereitung und Setup;22;0;;Nein;
+1.1;P1;Task;Zielbild, Scope und Forecast-Ziel definieren;4;2;;Nein;Forecast-Ziel, Horizont, Granularität, Muss/Kann
+1.2;P1;Task;Projektstruktur und Arbeitsbasis aufsetzen;4;1;1.1;Nein;
+1.2.1;1.2;Subtask;Ordnerstruktur erstellen;1;0;1.2;Nein;
+1.2.2;1.2;Subtask;Requirements und Basisumgebung aufsetzen;2;0;1.2.1;Nein;
+1.2.3;1.2;Subtask;Git und Konfigurationsbasis vorbereiten;1;0;1.2.2;Nein;
+1.3;P1;Task;MLflow Grundsetup lokal einrichten;4;1;1.2;Nein;Tracking testen, Experimentstruktur vorbereiten
+1.4;P1;Task;Architektur-Grundentscheid definieren;5;1;1.3;Nein;Connector, Schema, Modelle, MLflow
+1.5;P1;Task;Standardschema und Base-Interfaces definieren;5;1;1.4;Nein;series_id, timestamp, target, source_system, loaded_at
+P2;;Phase;Analysephase;32;0;P1;Nein;Business und Data Understanding
+2.1;P2;Task;Datenquellen und Zielgrössen definieren;4;1;1.5;Nein;
+2.2;P2;Task;CSV-Datenquelle anbinden;5;1;2.1;Nein;CSV zuerst, Proffix später
+2.3;P2;Task;Rohdaten prüfen und standardisieren;6;1;2.2;Nein;
+2.3.1;2.3;Subtask;Pflichtfelder prüfen;1;0;2.3;Nein;
+2.3.2;2.3;Subtask;Datentypen prüfen;1;0;2.3.1;Nein;
+2.3.3;2.3;Subtask;Dubletten und Nullwerte prüfen;2;0;2.3.2;Nein;
+2.3.4;2.3;Subtask;Standardschema herstellen;2;0;2.3.3;Nein;
+2.4;P2;Task;Erste explorative Datenanalyse;8;2;2.3;Nein;Trend, Saison, Lücken, Ausreisser
+2.5;P2;Task;Forecast-Setup konkretisieren;4;1;2.4;Nein;
+2.6;P2;Task;Zeitreihen-Splitkonzept definieren;5;1;2.5;Nein;Train/Val/Test chronologisch
+P3;;Phase;Architektur und Pipeline-Konzept;30;0;P2;Nein;
+3.1;P3;Task;Connector-Schicht implementieren;6;1;2.6;Nein;
+3.2;P3;Task;Preprocessing- und Validierungslogik implementieren;7;1;3.1;Nein;
+3.3;P3;Task;Feature-Builder und Split-Builder implementieren;7;1;3.2;Nein;
+3.4;P3;Task;Model-Interface und Prediction-Schema definieren;5;1;3.3;Nein;
+3.5;P3;Task;MLflow-Logging-Struktur zentral implementieren;5;1;3.4;Nein;
+P4;;Phase;Implementation V1;56;0;P3;Nein;CSV, Baseline, TimesFM, MLflow
+4.1;P4;Task;Naive Baseline implementieren;5;1;3.5;Nein;
+4.2;P4;Task;TimesFM integrieren;8;1;4.1;Nein;
+4.3;P4;Task;Trainingspipeline bauen;6;1;4.2;Nein;
+4.4;P4;Task;Evaluationspipeline bauen;5;1;4.3;Nein;
+4.5;P4;Task;Prediction-Pipeline bauen;4;1;4.4;Nein;
+4.6;P4;Task;MLflow vollständig anbinden;8;1;4.3,4.4,4.5;Nein;Params, Metrics, Artifacts, Model Logging
+4.7;P4;Task;End-to-End-Test CSV bis Forecast bis MLflow;6;2;4.6;Nein;
+4.8;P4;Task;Baseline versus TimesFM Erstvergleich;6;2;4.7;Nein;
+4.9;P4;Task;Review und Verbesserungsentscheid V1;8;2;4.8;Nein;
+P5;;Phase;Iterative Optimierung;52;0;P4;Ja;Feature Engineering, Training, Testing, Fehleranalyse
+5.1;P5;Task;Iteration 1 einfache Features;10;1;4.9;Ja;
+5.1.1;5.1;Subtask;Lag-Features bauen;3;0;5.1;Ja;
+5.1.2;5.1;Subtask;Rolling Mean und Std bauen;3;0;5.1.1;Ja;
+5.1.3;5.1;Subtask;Kalenderfeatures bauen;2;0;5.1.2;Ja;
+5.1.4;5.1;Subtask;Feature-Set dokumentieren;2;0;5.1.3;Ja;
+5.2;P5;Task;Iteration 1 neu trainieren und testen;8;1;5.1;Ja;
+5.3;P5;Task;Iteration 1 Fehleranalyse;6;2;5.2;Ja;
+5.4;P5;Task;Iteration 2 Features Split oder Horizont anpassen;10;1;5.3;Ja;
+5.5;P5;Task;Iteration 2 neu trainieren und testen;8;1;5.4;Ja;
+5.6;P5;Task;Iteration 2 Fehleranalyse und Vergleich;6;2;5.5;Ja;
+5.7;P5;Task;Optionale Iteration 3 mit exogenen Variablen vorbereiten;4;1;5.6;Ja;Wetter, Feiertage, Aktionen
+P6;;Phase;Implementation V2 weitere Modelle;42;0;P5;Ja;
+6.1;P6;Task;Zweites Modell auswählen und spezifizieren;4;1;5.6;Nein;
+6.2;P6;Task;Zweites Modell integrieren;10;1;6.1;Nein;
+6.3;P6;Task;MLflow-Tracking für zweites Modell anbinden;4;1;6.2;Nein;
+6.4;P6;Task;Modellvergleich mit identischem Datenset;8;2;6.3;Nein;
+6.5;P6;Task;Fehleranalyse und Vergleich zu TimesFM;6;2;6.4;Nein;
+6.6;P6;Task;Bestes Modell Champion bestimmen;4;1;6.5;Nein;
+6.7;P6;Task;Erweiterungsoption Proffix REST API konzeptionell vorbereiten;6;1;6.6;Nein;
+P7;;Phase;Testing und Evaluation;26;0;P6;Nein;
+7.1;P7;Task;Finale Backtests durchführen;8;1;6.6;Nein;
+7.2;P7;Task;Vergleich aller Runs in MLflow auswerten;6;1;7.1;Nein;
+7.3;P7;Task;Forecast versus Actual Reports erzeugen;4;1;7.2;Nein;
+7.4;P7;Task;Deployment und Prediction-Konzept beschreiben;4;1;7.3;Nein;
+7.5;P7;Task;SQL und Integrationsvorbereitung skizzieren;4;1;7.4;Nein;
+P8;;Phase;Schreiben der Thesis;105;0;P2;Ja;Läuft teilweise parallel zu technischen Phasen
+8.1;P8;Task;Recherche aktueller Stand Problematik;20;2;2.1;Ja;
+8.2;P8;Task;Recherche aktuelle Lösungsansätze;16;2;2.4;Ja;
+8.3;P8;Task;Methodik und Architektur dokumentieren;18;2;P3;Ja;
+8.4;P8;Task;Implementierung V1 dokumentieren;12;2;P4;Ja;
+8.5;P8;Task;Iterationen und Evaluation dokumentieren;16;2;P5,P6,P7;Ja;
+8.6;P8;Task;Handlungsempfehlung für Watosoft AG erarbeiten;8;1;7.5;Nein;
+8.7;P8;Task;Gesamtdokument überarbeiten;10;2;8.1,8.2,8.3,8.4,8.5,8.6;Ja;
+8.8;P8;Task;Abstract Summary und Schlussfassung;5;1;8.7;Nein;
+P9;;Phase;Finalisierung und Abgabe;12;0;P7,P8;Nein;
+9.1;P9;Task;Endreview fachlich;3;1;8.8;Nein;
+9.2;P9;Task;Endreview formal;2;1;9.1;Nein;
+9.3;P9;Task;Korrekturen einarbeiten;3;1;9.2;Nein;
+9.4;P9;Task;Abgabe vorbereiten;2;0;9.3;Nein;
+9.5;P9;Task;Präsentation vorbereiten;2;0;9.4;Nein;
