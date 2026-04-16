@@ -217,7 +217,6 @@ function migrateBoardCrossConnections(board: BoardState): BoardState {
   const compositeConns = board.connections.filter(
     (c) => c.from.includes(":") && c.to.includes(":")
   );
-  if (compositeConns.length === 0) return board;
 
   const existingCross = board.crossConnections ?? [];
   const existingKeys = new Set(
@@ -253,7 +252,21 @@ function migrateBoardCrossConnections(board: BoardState): BoardState {
     t.subBoard ? { ...t, subBoard: migrateBoardCrossConnections(t.subBoard) } : t
   );
 
-  return { ...board, tasks: migratedTasks, connections: cleanConns, crossConnections: newCross };
+  // Prune dangling crossConnections (pointing to tasks/phases that no longer exist)
+  const allSubTaskIds = new Set<string>();
+  for (const t of migratedTasks) {
+    if (t.subBoard?.tasks) {
+      for (const st of t.subBoard.tasks) allSubTaskIds.add(`${t.id}:${st.id}`);
+    }
+  }
+  const phaseIds = new Set(migratedTasks.map((t) => t.id));
+  const prunedCross = newCross.filter((cc) => {
+    const fromExists = phaseIds.has(cc.fromPhaseId) && allSubTaskIds.has(`${cc.fromPhaseId}:${cc.fromTaskId}`);
+    const toExists = phaseIds.has(cc.toPhaseId) && allSubTaskIds.has(`${cc.toPhaseId}:${cc.toTaskId}`);
+    return fromExists && toExists;
+  });
+
+  return { ...board, tasks: migratedTasks, connections: cleanConns, crossConnections: prunedCross };
 }
 
 // Apply migration to all boards in the group tree

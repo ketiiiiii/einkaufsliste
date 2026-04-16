@@ -1737,9 +1737,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           const hex = GANTT_COLORS_L[ph.color] ?? "#a1a1aa";
           listRows.push({ id: ph.id, title: ph.title, note: ph.note, color: ph.color, hex, duration: fmtDuration(ef - es), es, ef, indent: 0 });
           if (ph.subBoard?.tasks?.length) {
-            const sortedSubs = [...ph.subBoard.tasks].sort((a, b) =>
-              (subES.get(`${ph.id}:${a.id}`) ?? 0) - (subES.get(`${ph.id}:${b.id}`) ?? 0)
-            );
+            const sortedSubs = [...ph.subBoard.tasks].sort((a, b) => a.y - b.y);
             for (const st of sortedSubs) {
               const cid = `${ph.id}:${st.id}`;
               const sES = subES.get(cid) ?? 0;
@@ -2148,9 +2146,8 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           const hasSubTasks = (task.subBoard?.tasks?.length ?? 0) > 0;
           ganttRows.push({ id: task.id, title: task.title, note: task.note, color: task.color, duration: task.duration ?? 1, unit: task.unit, iterations: task.iterations, indent: 0, absoluteES: taskES, absoluteEF: taskEF, isCritical: criticalPath.criticalTaskIds.has(task.id), hasSubTasks, assignee: task.assignee });
           if (hasSubTasks && expandedPhaseIds.has(task.id)) {
-            const sortedSubs = [...task.subBoard!.tasks].sort((a, b) =>
-              (globalSubES.get(`${task.id}:${a.id}`) ?? 0) - (globalSubES.get(`${task.id}:${b.id}`) ?? 0)
-            );
+            // Sort by board y-position — stable order regardless of cross-phase connections
+            const sortedSubs = [...task.subBoard!.tasks].sort((a, b) => a.y - b.y);
             for (const st of sortedSubs) {
               const cid = `${task.id}:${st.id}`;
               ganttRows.push({ id: cid, title: st.title, note: st.note, color: st.color, duration: st.duration ?? 1, unit: st.unit, iterations: st.iterations, indent: 1, absoluteES: globalSubES.get(cid) ?? 0, absoluteEF: globalSubEF.get(cid) ?? effectiveHours(st), isCritical: _flatCPM.criticalTaskIds.has(cid), hasSubTasks: false, assignee: st.assignee });
@@ -2431,9 +2428,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
               assignee: task.assignee,
             });
             if (hasSubTasks) {
-              const sortedSubs = [...task.subBoard!.tasks].sort((a, b) =>
-                (globalSubES.get(`${task.id}:${a.id}`) ?? 0) - (globalSubES.get(`${task.id}:${b.id}`) ?? 0)
-              );
+              const sortedSubs = [...task.subBoard!.tasks].sort((a, b) => a.y - b.y);
               for (const st of sortedSubs) {
                 const cid = `${task.id}:${st.id}`;
                 exportRows.push({
