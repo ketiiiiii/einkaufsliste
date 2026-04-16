@@ -24,6 +24,8 @@ export type CrossConnection = {
   fromTaskId: string;
   toPhaseId: string;
   toTaskId: string;
+  lag?: number;
+  lagUnit?: "h" | "d";
 };
 
 export type TaskCard = {
@@ -1605,17 +1607,12 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           for (const c of (ph.subBoard.connections ?? []))
             _lFlatConns.push({ ...c, id: `_s_${ph.id}:${c.id}`, from: `${ph.id}:${c.from}`, to: `${ph.id}:${c.to}` });
         }
-        // Cross-phase connections
-        for (const c of connections) {
-          if (!c.from.includes(':') || !c.to.includes(':')) continue;
-          if (!_lFlatConns.some(fc => fc.from === c.from && fc.to === c.to))
-            _lFlatConns.push(c);
-        }
+        // Cross-phase connections — single source: crossConnections
         for (const cc of (crossConnections ?? [])) {
           const fid = `${cc.fromPhaseId}:${cc.fromTaskId}`;
           const tid = `${cc.toPhaseId}:${cc.toTaskId}`;
           if (!_lFlatConns.some(fc => fc.from === fid && fc.to === tid))
-            _lFlatConns.push({ id: cc.id, from: fid, to: tid });
+            _lFlatConns.push({ id: cc.id, from: fid, to: tid, lag: cc.lag, lagUnit: cc.lagUnit });
         }
         // Phase→subtask virtual edges
         for (const c of connections) {
@@ -1915,17 +1912,12 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           for (const c of (ph.subBoard.connections ?? []))
             _flatConns.push({ ...c, id: `_s_${ph.id}:${c.id}`, from: `${ph.id}:${c.from}`, to: `${ph.id}:${c.to}` });
         }
-        // Cross-phase task-to-task connections from root board
-        for (const c of connections) {
-          if (c.from.includes(':') && c.to.includes(':')) _flatConns.push(c);
-        }
-        // Also include crossConnections (e.g. manually-added phases like Meetings)
+        // Cross-phase task-to-task connections — single source: crossConnections
         for (const cc of (crossConnections ?? [])) {
           const cid = `${cc.fromPhaseId}:${cc.fromTaskId}`;
           const tid = `${cc.toPhaseId}:${cc.toTaskId}`;
-          // Avoid duplicates if already present as composite-ID connection
           if (!_flatConns.some((fc) => fc.from === cid && fc.to === tid)) {
-            _flatConns.push({ id: cc.id, from: cid, to: tid });
+            _flatConns.push({ id: cc.id, from: cid, to: tid, lag: cc.lag, lagUnit: cc.lagUnit });
           }
         }
         // Translate phase-level connections into subtask-level virtual edges:
@@ -2190,21 +2182,13 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             }
           }
         }
-        // Cross-phase task-level connections (show when both phases expanded)
-        for (const c of connections) {
-          if (!c.from.includes(':') || !c.to.includes(':')) continue;
-          const fp = c.from.split(':')[0], tp = c.to.split(':')[0];
-          if (expandedPhaseIds.has(fp) && expandedPhaseIds.has(tp)) {
-            ganttSubConns.push({ ...c, isSubConn: true });
-          }
-        }
-        // Also include crossConnections (e.g. manually-added phases like Meetings)
+        // Cross-phase task-level connections — single source: crossConnections
         for (const cc of (crossConnections ?? [])) {
           const fromId = `${cc.fromPhaseId}:${cc.fromTaskId}`;
           const toId = `${cc.toPhaseId}:${cc.toTaskId}`;
           if (expandedPhaseIds.has(cc.fromPhaseId) && expandedPhaseIds.has(cc.toPhaseId)) {
             if (!ganttSubConns.some((gc) => gc.from === fromId && gc.to === toId)) {
-              ganttSubConns.push({ id: cc.id, from: fromId, to: toId, isSubConn: true });
+              ganttSubConns.push({ id: cc.id, from: fromId, to: toId, lag: cc.lag, lagUnit: cc.lagUnit, isSubConn: true });
             }
           }
         }
@@ -2504,21 +2488,14 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
             }
           }
 
-          // Cross-phase connections
-          for (const c of connections) {
-            if (!c.from.includes(':') || !c.to.includes(':')) continue;
-            exportConns.push({
-              id: c.id, from: c.from, to: c.to,
-              lag: c.lag, lagUnit: c.lagUnit,
-              level: 'sub', isBackEdge: false,
-            });
-          }
+          // Cross-phase connections — single source: crossConnections
           for (const cc of (crossConnections ?? [])) {
             const fromId = `${cc.fromPhaseId}:${cc.fromTaskId}`;
             const toId = `${cc.toPhaseId}:${cc.toTaskId}`;
             if (!exportConns.some(ec => ec.from === fromId && ec.to === toId)) {
               exportConns.push({
                 id: cc.id, from: fromId, to: toId,
+                lag: cc.lag, lagUnit: cc.lagUnit,
                 level: 'sub', isBackEdge: false,
               });
             }

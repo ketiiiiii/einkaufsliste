@@ -211,6 +211,60 @@ function makeGroup(name: string): PlanGroup {
   return { id, name, boardState: { tasks: [], connections: [] }, children: [], phasesEnabled: true };
 }
 
+// Migrate composite-ID connections from connections[] into crossConnections[] (single source of truth).
+// This handles legacy data where cross-phase connections were stored in both places.
+function migrateBoardCrossConnections(board: BoardState): BoardState {
+  const compositeConns = board.connections.filter(
+    (c) => c.from.includes(":") && c.to.includes(":")
+  );
+  if (compositeConns.length === 0) return board;
+
+  const existingCross = board.crossConnections ?? [];
+  const existingKeys = new Set(
+    existingCross.map((cc) => `${cc.fromPhaseId}:${cc.fromTaskId}→${cc.toPhaseId}:${cc.toTaskId}`)
+  );
+
+  const newCross: CrossConnection[] = [...existingCross];
+  for (const c of compositeConns) {
+    const [fromPhaseId, ...fromRest] = c.from.split(":");
+    const [toPhaseId, ...toRest] = c.to.split(":");
+    const key = `${c.from}→${c.to}`;
+    if (!existingKeys.has(key)) {
+      newCross.push({
+        id: c.id,
+        fromPhaseId,
+        fromTaskId: fromRest.join(":"),
+        toPhaseId,
+        toTaskId: toRest.join(":"),
+        lag: c.lag,
+        lagUnit: c.lagUnit,
+      });
+      existingKeys.add(key);
+    }
+  }
+
+  // Remove composite-ID entries from connections, keep phase-level only
+  const cleanConns = board.connections.filter(
+    (c) => !c.from.includes(":") || !c.to.includes(":")
+  );
+
+  // Recurse into subBoards (nested phases won't have cross-connections, but be thorough)
+  const migratedTasks = board.tasks.map((t) =>
+    t.subBoard ? { ...t, subBoard: migrateBoardCrossConnections(t.subBoard) } : t
+  );
+
+  return { ...board, tasks: migratedTasks, connections: cleanConns, crossConnections: newCross };
+}
+
+// Apply migration to all boards in the group tree
+function migrateGroupTree(groups: PlanGroup[]): PlanGroup[] {
+  return groups.map((g) => ({
+    ...g,
+    boardState: migrateBoardCrossConnections(g.boardState),
+    children: migrateGroupTree(g.children),
+  }));
+}
+
 // When phases are disabled: promote subBoard tasks one level up to the flat board
 function flattenPhasesBoard(board: BoardState): BoardState {
   const tasks: BoardState["tasks"] = [];
@@ -597,15 +651,23 @@ export function TasksPageClient() {
           if (Array.isArray(parsed.products)) {
             // Current format: AppRootState with products
             const state = parsed as unknown as AppRootState;
-            setAppState(state);
-            const activeProd = state.products.find((p) => p.id === state.activeProductId);
+            // Migrate composite-ID connections → crossConnections (single source of truth)
+            const migratedState: AppRootState = {
+              ...state,
+              products: state.products.map((p) => ({
+                ...p,
+                groups: migrateGroupTree(p.groups),
+              })),
+            };
+            setAppState(migratedState);
+            const activeProd = migratedState.products.find((p) => p.id === migratedState.activeProductId);
             if (activeProd) {
               const activeGroup = findGroup(activeProd.groups, activeProd.activeGroupId);
               if (activeGroup) setRootBoard(activeGroup.boardState);
             }
           } else if (Array.isArray(parsed.groups)) {
             // Legacy v1: AppRootState with groups — migrate to product
-            const legacyGroups = parsed.groups as PlanGroup[];
+            const legacyGroups = migrateGroupTree(parsed.groups as PlanGroup[]);
             const legacyActiveGroupId = (parsed.activeGroupId as string) ?? null;
             const product = makeProduct("Standard");
             product.groups = legacyGroups;
@@ -617,7 +679,7 @@ export function TasksPageClient() {
           } else if (Array.isArray(parsed.tasks)) {
             // Legacy v0: bare BoardState — migrate into default product+group
             const defaultGroup = makeGroup("Standard");
-            defaultGroup.boardState = parsed as unknown as BoardState;
+            defaultGroup.boardState = migrateBoardCrossConnections(parsed as unknown as BoardState);
             const product = makeProduct("Standard");
             product.groups = [defaultGroup];
             product.activeGroupId = defaultGroup.id;
@@ -713,24 +775,12 @@ export function TasksPageClient() {
     setRootBoard((root) => ({ ...root, crossConnections: conns }));
   };
 
-  // Derive crossConnections from root connections with composite IDs ("P1:1.5" → "P2:2.1")
-  // if no explicit crossConnections are stored yet.
-  const effectiveCrossConnections = useMemo<CrossConnection[]>(() => {
-    if (rootBoard.crossConnections) return rootBoard.crossConnections;
-    return rootBoard.connections
-      .filter((c) => c.from.includes(":") && c.to.includes(":"))
-      .map((c) => {
-        const [fromPhaseId, ...fromRest] = c.from.split(":");
-        const [toPhaseId, ...toRest] = c.to.split(":");
-        return {
-          id: c.id,
-          fromPhaseId,
-          fromTaskId: fromRest.join(":"),
-          toPhaseId,
-          toTaskId: toRest.join(":"),
-        };
-      });
-  }, [rootBoard.crossConnections, rootBoard.connections]);
+  // crossConnections is the single source of truth for cross-phase connections.
+  // Migration from legacy composite-ID entries in connections[] happens once on load (see below).
+  const effectiveCrossConnections = useMemo<CrossConnection[]>(
+    () => rootBoard.crossConnections ?? [],
+    [rootBoard.crossConnections]
+  );
 
   const handleNavigateToPhase = (phaseId: string, phaseTitle: string) => {
     setDrillPath([{ taskId: phaseId, title: phaseTitle }]);
