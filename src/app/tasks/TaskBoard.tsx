@@ -1186,6 +1186,27 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                                 >
                                   ↙ {getPhaseTitle(c.fromPhaseId)}: {getTaskTitle(c.fromPhaseId, c.fromTaskId)}
                                 </button>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  value={c.lag ?? 0}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value) || 0;
+                                    onCrossConnectionsChange?.((crossConnections ?? []).map((x) => x.id === c.id ? { ...x, lag: val || undefined } : x));
+                                  }}
+                                  className="ml-1 w-6 rounded border border-sky-300 bg-white px-0.5 text-center text-[10px] text-sky-800"
+                                  title="Lag (Wartezeit)"
+                                />
+                                <button
+                                  type="button"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); onCrossConnectionsChange?.((crossConnections ?? []).map((x) => x.id === c.id ? { ...x, lagUnit: x.lagUnit === "d" ? "h" : "d" } : x)); }}
+                                  className="text-[9px] font-bold text-sky-500 hover:text-sky-800"
+                                  title="Einheit wechseln (h/d)"
+                                >{c.lagUnit === "d" ? "d" : "h"}</button>
                                 <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onCrossConnectionsChange?.((crossConnections ?? []).filter((x) => x.id !== c.id)); }} className="ml-0.5 text-[10px] opacity-60 hover:opacity-100">×</button>
                               </span>
                             ))}
@@ -1200,6 +1221,27 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                                 >
                                   ↗ {getPhaseTitle(c.toPhaseId)}: {getTaskTitle(c.toPhaseId, c.toTaskId)}
                                 </button>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  value={c.lag ?? 0}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value) || 0;
+                                    onCrossConnectionsChange?.((crossConnections ?? []).map((x) => x.id === c.id ? { ...x, lag: val || undefined } : x));
+                                  }}
+                                  className="ml-1 w-6 rounded border border-violet-300 bg-white px-0.5 text-center text-[10px] text-violet-800"
+                                  title="Lag (Wartezeit)"
+                                />
+                                <button
+                                  type="button"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); onCrossConnectionsChange?.((crossConnections ?? []).map((x) => x.id === c.id ? { ...x, lagUnit: x.lagUnit === "d" ? "h" : "d" } : x)); }}
+                                  className="text-[9px] font-bold text-violet-500 hover:text-violet-800"
+                                  title="Einheit wechseln (h/d)"
+                                >{c.lagUnit === "d" ? "d" : "h"}</button>
                                 <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onCrossConnectionsChange?.((crossConnections ?? []).filter((x) => x.id !== c.id)); }} className="ml-0.5 text-[10px] opacity-60 hover:opacity-100">×</button>
                               </span>
                             ))}
@@ -3588,6 +3630,8 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                                 fromTaskId: crossPicker.direction === "in" ? t.id : crossPicker.taskId,
                                 toPhaseId: crossPicker.direction === "in" ? currentPhaseId! : crossPicker.selectedPhaseId!,
                                 toTaskId: crossPicker.direction === "in" ? crossPicker.taskId : t.id,
+                                lag: 1,
+                                lagUnit: "h",
                               };
                               onCrossConnectionsChange?.([...(crossConnections ?? []), newConn]);
                               setCrossPicker(null);
