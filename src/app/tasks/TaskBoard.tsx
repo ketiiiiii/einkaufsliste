@@ -2597,8 +2597,15 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         }
         const _hasSel = _selId !== null;
 
+        const _totalDays = (maxHours / HOURS_PER_DAY);
+        const _totalLabel = Number.isInteger(_totalDays) ? `${maxHours}h / ${_totalDays}d` : `${maxHours}h / ${_totalDays.toFixed(1)}d`;
+
         const ganttChart = (
-          <div className="rounded-xl border border-zinc-100 bg-white shadow-sm" style={{ display: 'flex', overflow: 'hidden' }}>
+          <div className="rounded-xl border border-zinc-100 bg-white shadow-sm" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-1.5">
+              <span className="text-xs font-semibold text-zinc-500">Total: <span className="text-zinc-800">{_totalLabel}</span></span>
+            </div>
+            <div style={{ display: 'flex', overflow: 'hidden' }}>
             {/* Sticky label column */}
             <div style={{ width: LABEL_W, minWidth: LABEL_W, flexShrink: 0, borderRight: '1px solid #e4e4e7', background: '#fff', zIndex: 2 }}>
               <svg width={LABEL_W} height={svgH} className="block font-sans text-xs" style={{ display: 'block' }}
@@ -3218,6 +3225,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
                 </div>
               );
             })()}
+            </div>
           </div>
         );
 

@@ -96,6 +96,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
   <div class="gantt-header">
     <div style="display:flex;align-items:center;gap:12px">
       <h1>${escapeHTML(title)}</h1>
+      <span id="totalLabel" style="font-size:12px;font-weight:600;color:#71717a;background:#f4f4f5;padding:2px 10px;border-radius:6px"></span>
       <div class="view-toggle">
         <button class="btn active" id="viewGantt">Gantt</button>
         <button class="btn" id="viewList">Liste</button>
@@ -124,6 +125,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
   var MAX_H = DATA.maxHours;
 
   var ROW_H = 36, HEADER_H = 40, LABEL_W = 300, HR_W = 18, PAD = 12, HPD = 8;
+
+  // Total label
+  var _totalDays = MAX_H / HPD;
+  var _totalText = 'Total: ' + MAX_H + 'h / ' + (Number.isInteger(_totalDays) ? _totalDays : _totalDays.toFixed(1)) + 'd';
+  var totalEl = document.getElementById('totalLabel');
+  if (totalEl) totalEl.textContent = _totalText;
   var COLORS = {amber:"#fbbf24",sky:"#38bdf8",rose:"#fb7185",emerald:"#34d399",violet:"#a78bfa",zinc:"#a1a1aa",orange:"#fb923c",teal:"#2dd4bf",indigo:"#818cf8",mint:"#86efac"};
 
   var collapsed = new Set();
