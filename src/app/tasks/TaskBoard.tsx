@@ -1948,6 +1948,11 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           }
         }
         const _flatBackIds = findBackEdges(_flatTasks, _flatConns);
+        // Build set of back-edge from→to pairs for sub-level Gantt rendering
+        const _subBackPairs = new Set<string>();
+        for (const c of _flatConns) {
+          if (_flatBackIds.has(c.id)) _subBackPairs.add(`${c.from}|${c.to}`);
+        }
         const _flatFwd = _flatConns.filter((c) => !_flatBackIds.has(c.id));
         const _flatCPM = computeCriticalPath(_flatTasks, _flatFwd);
         const globalSubES = new Map<string, number>();
@@ -2345,15 +2350,19 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
           const fi = rowIndex.get(c.from), ti = rowIndex.get(c.to);
           if (fi === undefined || ti === undefined) continue;
           const srcY = HEADER_H + fi * ROW_H + ROW_H / 2;
-          if (c.loopDuration !== undefined) {
+          const _isSubBack = _subBackPairs.has(`${c.from}|${c.to}`);
+          if (_isSubBack) {
             const srcX = _barPx[fi].r + 2;
             const dstCX = (_barPx[ti].l + _barPx[ti].r) / 2;
             const bottomY = HEADER_H + (Math.max(fi, ti) + 1) * ROW_H + 4;
             const dstYL = HEADER_H + ti * ROW_H + ROW_H - 6;
+            const _loopLbl = c.loopDuration
+              ? `↺ ${fmtDuration(toHours(c.loopDuration, (c.loopDurationUnit ?? "h") as "h" | "d"))}`
+              : "↺";
             _loopRoutes.push({
               id: c.id,
               path: `M ${srcX},${srcY} H ${srcX + 14} V ${bottomY} H ${dstCX} V ${dstYL}`,
-              label: `↺ ${fmtDuration(toHours(c.loopDuration, (c.loopDurationUnit ?? "h") as "h" | "d"))}`,
+              label: _loopLbl,
               labelX: (srcX + 14 + dstCX) / 2,
               labelY: bottomY + 10,
             });
@@ -2387,7 +2396,7 @@ export function TaskBoard({ initialState, onStateChange, onDrillIn, externalBoar
         }
         // Sub-task level back edges
         for (const c of ganttSubConns) {
-          if (c.loopDuration === undefined) continue;
+          if (!_subBackPairs.has(`${c.from}|${c.to}`) || !c.loopDuration) continue;
           const ti = rowIndex.get(c.to), fi = rowIndex.get(c.from);
           if (ti === undefined || fi === undefined) continue;
           const entryES = ganttRows[ti].absoluteES;
